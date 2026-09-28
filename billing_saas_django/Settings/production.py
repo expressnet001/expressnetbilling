@@ -41,12 +41,13 @@ RAILWAY_ALLOWED_HOSTS = [
     "stumpiest-caudally-eloy.ngrok-free.dev",
     "expressnetbilling.com",
 ]
-ALLOWED_HOSTS = sorted({*RAILWAY_ALLOWED_HOSTS, *env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")})
+ALLOWED_HOSTS = sorted({*RAILWAY_ALLOWED_HOSTS, f".{PUBLIC_BASE_DOMAIN}", *env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")})
 CSRF_TRUSTED_ORIGINS = sorted(
     {
         "https://web-production-b9d86.up.railway.app",
         "https://stumpiest-caudally-eloy.ngrok-free.dev",
         "https://expressnetbilling.com",
+        f"https://*.{PUBLIC_BASE_DOMAIN}",
         *env_list("CSRF_TRUSTED_ORIGINS"),
     }
 )

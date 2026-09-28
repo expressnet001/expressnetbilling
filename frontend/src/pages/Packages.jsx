@@ -4,6 +4,7 @@ import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Database, Edit2, Gaug
 import toast from 'react-hot-toast';
 import api from '../api/axios';
 import Modal from '../components/Modal';
+import Pagination from '../components/Pagination';
 
 const initialForm = {
   service_type: 'hotspot',
@@ -242,6 +243,8 @@ export default function Packages() {
   const [errors, setErrors] = useState({});
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   async function load() {
     setLoading(true);
@@ -469,6 +472,16 @@ export default function Packages() {
     free: packages.filter((pkg) => Number(pkg.price || 0) === 0 || `${pkg.name || ''}`.toLowerCase().includes('free')).length,
   };
 
+  const pagedPackages = filteredPackages.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter, search]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(filteredPackages.length / pageSize))));
+  }, [filteredPackages.length]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -567,7 +580,7 @@ export default function Packages() {
                 <tr><td className="table-cell text-slate-500" colSpan="10">Loading packages...</td></tr>
               ) : filteredPackages.length === 0 ? (
                 <tr><td className="table-cell text-slate-500" colSpan="10">No packages found.</td></tr>
-              ) : filteredPackages.map((pkg, index) => (
+              ) : pagedPackages.map((pkg, index) => (
                 <tr key={pkg.id} className={index % 2 === 0 ? 'bg-white text-slate-700' : 'bg-slate-50/70 text-slate-700'}>
                   <td className="table-cell px-3 py-2.5 font-normal text-slate-800">{pkg.name}</td>
                   <td className="table-cell px-3 py-2.5">
@@ -614,6 +627,7 @@ export default function Packages() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} pageSize={pageSize} total={filteredPackages.length} label="packages" onPageChange={setPage} />
       </section>
 
       {modalOpen && (

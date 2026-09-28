@@ -37,6 +37,13 @@ ADMIN_FRONTEND_PATH = env_path("ADMIN_FRONTEND_PATH", "admin")
 
 USE_DJANGO_TENANTS = env_bool("USE_DJANGO_TENANTS", False)
 TENANT_BASE_DOMAIN = os.getenv("TENANT_BASE_DOMAIN", "expressnet.app")
+PUBLIC_BASE_DOMAIN = os.getenv("PUBLIC_BASE_DOMAIN", "expressnetbilling.com").strip().lower()
+APP_SUBDOMAIN = os.getenv("APP_SUBDOMAIN", "app").strip().lower()
+ADMIN_SUBDOMAIN = os.getenv("ADMIN_SUBDOMAIN", "admin").strip().lower()
+API_MAX_BODY_BYTES = int(os.getenv("API_MAX_BODY_BYTES", str(2 * 1024 * 1024)))
+API_GATEWAY_RATE_LIMIT = int(os.getenv("API_GATEWAY_RATE_LIMIT", "300"))
+API_GATEWAY_RATE_WINDOW = int(os.getenv("API_GATEWAY_RATE_WINDOW", "60"))
+SESSION_IDLE_TIMEOUT_SECONDS = int(os.getenv("SESSION_IDLE_TIMEOUT_SECONDS", "600"))
 
 SHARED_APPS = [
     "django_tenants",
@@ -78,6 +85,7 @@ if importlib.util.find_spec("whitenoise"):
 if USE_DJANGO_TENANTS:
     MIDDLEWARE.append("django_tenants.middleware.main.TenantMainMiddleware")
 MIDDLEWARE += [
+    "billing_api.middleware.ApiGatewayMiddleware",
     "billing_api.middleware.SecurityHeadersMiddleware",
     "billing_api.middleware.SimpleRateLimitMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -130,6 +138,10 @@ ADMIN_NOTIFICATION_EMAILS = env_list("ADMIN_NOTIFICATION_EMAILS")
 TENANT_LOGIN_2FA_ENABLED = env_bool("TENANT_LOGIN_2FA_ENABLED", True)
 
 X_FRAME_OPTIONS = "DENY"
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+SESSION_COOKIE_HTTPONLY = True
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],
@@ -179,6 +191,10 @@ CELERY_BEAT_SCHEDULE = {
     },
     "expire-customer-access-every-five-minutes": {
         "task": "billing_api.tasks.expire_customer_access",
+        "schedule": 300.0,
+    },
+    "notify-router-offline-every-five-minutes": {
+        "task": "billing_api.tasks.notify_router_offline",
         "schedule": 300.0,
     },
 }

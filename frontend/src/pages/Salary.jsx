@@ -1,6 +1,7 @@
 import { Banknote, ChevronDown, Pencil, Plus, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
+import Pagination from '../components/Pagination';
 
 const initialSalaries = [
   { id: 'SAL-001', staff: 'Network Technician', role: 'Field support', amount: 28000, method: 'Mpesa', status: 'paid', paid_at: '2026-06-30T09:15:00' },
@@ -44,11 +45,22 @@ export default function Salary() {
   const [editingId, setEditingId] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const filtered = useMemo(() => {
     const needle = query.toLowerCase();
     return salaries.filter((salary) => `${salary.staff} ${salary.role} ${salary.method} ${salary.status}`.toLowerCase().includes(needle));
   }, [query, salaries]);
+  const pagedSalaries = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(filtered.length / pageSize))));
+  }, [filtered.length]);
 
   const totals = useMemo(() => {
     const now = new Date();
@@ -121,7 +133,7 @@ export default function Salary() {
             <tbody className="divide-y divide-slate-200 text-xs text-black">
               {filtered.length === 0 ? (
                 <tr><td className="px-5 py-10 text-center text-slate-500" colSpan="7">No salary records found.</td></tr>
-              ) : filtered.map((salary) => (
+              ) : pagedSalaries.map((salary) => (
                 <tr key={salary.id}>
                   <td className="px-5 py-4 font-bold" style={{ color: 'var(--app-accent)' }}>{salary.staff}</td>
                   <td className="px-5 py-4">{salary.role || '-'}</td>
@@ -140,6 +152,7 @@ export default function Salary() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} pageSize={pageSize} total={filtered.length} label="salary records" onPageChange={setPage} />
       </section>
 
       {modalOpen && (

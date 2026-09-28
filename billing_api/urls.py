@@ -98,6 +98,7 @@ urlpatterns = [
     path("subscription/status", core_views.tenant_subscription_status),
     path("profile", management_views.profile),
     path("settings/business", management_views.settings_business),
+    path("settings/payment-change/request", management_views.request_payment_change_code),
     path("settings/logo", management_views.settings_logo),
     path("settings/test-sms", management_views.settings_test_sms),
     path("settings/test-whatsapp", management_views.settings_test_whatsapp),

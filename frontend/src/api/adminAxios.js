@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { ADMIN_API_PATH, ADMIN_LOGIN_PATH } from '../config/adminPaths';
+import { ADMIN_API_PATH, adminLoginUrl } from '../config/adminPaths';
 
 const adminApi = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
@@ -25,8 +25,9 @@ adminApi.interceptors.response.use(
     if ([401, 403].includes(error.response?.status)) {
       localStorage.removeItem('admin_token');
       localStorage.removeItem('admin_user');
-      if (window.location.pathname !== ADMIN_LOGIN_PATH) {
-        window.location.assign(ADMIN_LOGIN_PATH);
+      const loginUrl = adminLoginUrl();
+      if (window.location.pathname !== loginUrl) {
+        window.location.assign(loginUrl);
       }
     }
     return Promise.reject(error);

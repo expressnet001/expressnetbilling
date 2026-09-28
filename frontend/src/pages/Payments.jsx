@@ -2,6 +2,7 @@ import { CheckCheck, ChevronDown, Coins, Eye, MoreVertical, Plus, Search, X, Set
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
+import Pagination from '../components/Pagination';
 
 const blankPayment = {
   id: '',
@@ -74,6 +75,8 @@ export default function Payments() {
   const [savingMethods, setSavingMethods] = useState(false);
   const [methodsOpen, setMethodsOpen] = useState(false);
   const [settlementStatus, setSettlementStatus] = useState('not_created');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const onlineMethod = (method) => {
     if (method === 'paybill') return 'daraja_paybill';
     if (method === 'buygoods') return 'daraja_buygoods';
@@ -123,6 +126,12 @@ export default function Payments() {
   const savePaymentMethods = async () => {
     setSavingMethods(true);
     try {
+      const { data: challenge } = await api.post('/settings/payment-change/request');
+      const code = window.prompt('Enter the confirmation code sent to the tenant phone or email:');
+      if (!code?.trim()) {
+        toast.error('Payment settings were not changed because confirmation was cancelled.');
+        return;
+      }
       const { data } = await api.patch('/settings/business', {
         payment_methods: paymentSettings.methods.map(onlineMethod),
         business_number: paymentSettings.businessNumber,
@@ -138,6 +147,8 @@ export default function Payments() {
         daraja_environment: paymentSettings.environment,
         daraja_shortcode_type: onlineMethod(selectedMethod) === 'daraja_buygoods' ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline',
         payment_provider: 'mpesa',
+        payment_change_id: challenge.challenge_id,
+        payment_change_code: code.trim(),
       });
       setSettlementStatus(data.config?.settlement_status || 'ready');
       toast.success('Payment settings saved');
@@ -153,6 +164,15 @@ export default function Payments() {
     const needle = query.toLowerCase();
     return base.filter((payment) => `${payment.customer_name || ''} ${payment.access_username || ''} ${payment.phone || ''} ${payment.payment_code || ''} ${payment.daraja_receipt_number || ''}`.toLowerCase().includes(needle));
   }, [payments, query, successfulPayments, tab]);
+  const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, tab]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(rows.length / pageSize))));
+  }, [rows.length]);
 
   const totals = useMemo(() => {
     const now = new Date();
@@ -265,7 +285,7 @@ export default function Payments() {
                 <tr><td className="px-5 py-10 text-center text-slate-500" colSpan="9">Loading payments...</td></tr>
               ) : rows.length === 0 ? (
                 <tr><td className="px-5 py-10 text-center text-slate-500" colSpan="9">No payments found.</td></tr>
-              ) : rows.map((payment) => (
+              ) : pagedRows.map((payment) => (
                 <tr key={payment.id}>
                   <td className="px-5 py-4"><input type="checkbox" className="h-4 w-4 rounded border-slate-300" /></td>
                   <td className="px-5 py-4 font-bold" style={{ color: 'var(--app-accent)' }}>{payment.customer_name || payment.access_username || '-'}</td>
@@ -281,6 +301,7 @@ export default function Payments() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} pageSize={pageSize} total={rows.length} label="payments" onPageChange={setPage} />
       </section>
 
       {modalOpen && (

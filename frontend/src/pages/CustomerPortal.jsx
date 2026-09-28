@@ -93,6 +93,9 @@ export default function CustomerPortal() {
   const [serviceType, setServiceType] = useState(pathServiceType() || 'hotspot');
   const [pppoeUsername, setPppoeUsername] = useState('');
   const [macAddress, setMacAddress] = useState('');
+  const [tvPackageId, setTvPackageId] = useState('');
+  const [tvPhone, setTvPhone] = useState('');
+  const [tvMacAddress, setTvMacAddress] = useState('');
   const [selectedPackage, setSelectedPackage] = useState(null);
   const [receiptCode, setReceiptCode] = useState('');
   const [voucherCode, setVoucherCode] = useState('');
@@ -269,24 +272,32 @@ export default function CustomerPortal() {
     return `${pkg?.duration_days || 1} days`;
   };
 
-  const pay = async () => {
-    if (!phone.trim()) {
+  const pay = async (checkout = {}) => {
+    const checkoutPackage = checkout.package || selectedPackage;
+    const checkoutType = checkout.type || serviceType;
+    const checkoutPhone = checkout.phone ?? phone;
+    const checkoutMacAddress = checkout.macAddress ?? macAddress;
+    if (!checkoutPhone.trim()) {
       toast.error('Enter your phone number');
       return;
     }
-    if (serviceType === 'tv' && !macAddress.trim()) {
+    if (checkoutType === 'tv' && !checkoutMacAddress.trim()) {
       toast.error('Enter the TV MAC address');
+      return;
+    }
+    if (!checkoutPackage) {
+      toast.error('Select a package');
       return;
     }
 
     setPaying(true);
     try {
       const { data } = await publicApi.post(`/public/${tenantId}/pay`, {
-        package_id: selectedPackage.id,
-        phone,
-        service_type: serviceType,
+        package_id: checkoutPackage.id,
+        phone: checkoutPhone,
+        service_type: checkoutType,
         username: pppoeUsername,
-        mac_address: macAddress,
+        mac_address: checkoutMacAddress,
         ip: routerContext.clientIp,
         client_ip: routerContext.clientIp,
         mac: routerContext.mac,
@@ -305,11 +316,19 @@ export default function CustomerPortal() {
       setPhone('');
       setPppoeUsername('');
       setMacAddress('');
+      setTvPhone('');
+      setTvMacAddress('');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not start payment');
     } finally {
       setPaying(false);
     }
+  };
+
+  const buyTv = async (event) => {
+    event.preventDefault();
+    const pkg = packages.find((item) => String(item.id) === String(tvPackageId));
+    await pay({ package: pkg, type: 'tv', phone: tvPhone, macAddress: tvMacAddress });
   };
 
   const recover = async (event) => {
@@ -518,20 +537,33 @@ export default function CustomerPortal() {
                   >
                     Buy
                   </button>
-                  {packageType(pkg) === 'hotspot' && (
-                    <button
-                      type="button"
-                      className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md border border-white/15 px-4 text-sm font-bold text-white hover:bg-white/10"
-                      onClick={() => openPayment(pkg, 'tv')}
-                    >
-                      <Monitor size={16} />
-                      Buy for TV
-                    </button>
-                  )}
                 </div>
               </article>
             ))}
           </div>
+        )}
+        {packages.some((pkg) => packageType(pkg) === 'hotspot') && (
+          <form className="mt-4 rounded-lg border border-white/10 bg-[#242424] p-4 shadow-[0_10px_26px_rgba(0,0,0,0.35)]" onSubmit={buyTv}>
+            <div className="flex items-center gap-2">
+              <Monitor size={17} className="text-white" />
+              <h2 className="text-base font-bold text-white">Buy internet for TV</h2>
+            </div>
+            <p className="mt-1 text-xs text-slate-300">Select a package, then enter the TV MAC address and your M-Pesa phone number.</p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              <select className="h-10 rounded-md border border-white/10 bg-black px-3 text-sm text-white outline-none focus:border-[#2600d8]" value={tvPackageId} onChange={(event) => setTvPackageId(event.target.value)} required aria-label="TV package">
+                <option value="">Select a package</option>
+                {packages.filter((pkg) => packageType(pkg) === 'hotspot').map((pkg) => (
+                  <option key={pkg.id} value={pkg.id}>{pkg.name} - Ksh {pkg.price}</option>
+                ))}
+              </select>
+              <input className="h-10 rounded-md border border-white/10 bg-black px-3 text-sm uppercase text-white outline-none placeholder:text-slate-500 focus:border-[#2600d8]" placeholder="TV MAC address" value={tvMacAddress} onChange={(event) => setTvMacAddress(event.target.value.toUpperCase())} required />
+              <input className="h-10 rounded-md border border-white/10 bg-black px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#2600d8]" placeholder="M-Pesa/phone number" value={tvPhone} onChange={(event) => setTvPhone(event.target.value)} required />
+            </div>
+            <button type="submit" className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#2600d8] px-5 text-sm font-bold text-white shadow-lg shadow-black/30" disabled={paying}>
+              <CreditCard size={16} />
+              {paying ? 'Starting payment...' : 'Buy for TV'}
+            </button>
+          </form>
         )}
       </section>
 

@@ -18,7 +18,7 @@ import {
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '../../context/AdminAuthContext';
-import { ADMIN_LOGIN_PATH, adminPath } from '../../config/adminPaths';
+import { adminLoginUrl, adminPath } from '../../config/adminPaths';
 
 const links = [
   { to: adminPath('dashboard'), label: 'Dashboard', icon: Home },
@@ -38,7 +38,7 @@ export default function AdminLayout() {
 
   const logout = () => {
     logoutAdmin();
-    navigate(ADMIN_LOGIN_PATH, { replace: true });
+    navigate(adminLoginUrl(), { replace: true });
   };
 
   const navClass = ({ isActive }) =>

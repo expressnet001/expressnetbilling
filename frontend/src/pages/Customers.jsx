@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
 import Modal from '../components/Modal';
+import Pagination from '../components/Pagination';
 import StatusBadge from '../components/StatusBadge';
 
 const initialForm = {
@@ -80,6 +81,8 @@ export default function Customers({ initialFilter = 'all', serviceLocked = null,
   const [modalOpen, setModalOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState(initialFilter);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const [form, setForm] = useState(initialForm);
   const [errors, setErrors] = useState({});
   const [editingId, setEditingId] = useState(null);
@@ -188,6 +191,7 @@ export default function Customers({ initialFilter = 'all', serviceLocked = null,
   ].filter(([key]) => !serviceLocked || ['all', serviceLocked, 'paused', 'offline'].includes(key))), [serviceLocked, userStats]);
 
   const filteredCustomerIds = useMemo(() => filteredCustomers.map((customer) => customer.id), [filteredCustomers]);
+  const pagedCustomers = useMemo(() => filteredCustomers.slice((page - 1) * pageSize, page * pageSize), [filteredCustomers, page]);
   const selectedVisibleIds = selectedCustomerIds.filter((id) => filteredCustomerIds.includes(id));
   const allVisibleSelected = filteredCustomerIds.length > 0 && selectedVisibleIds.length === filteredCustomerIds.length;
   const tableColSpan = (isHotspotOnlyPage ? 10 : 13) + 1;
@@ -195,6 +199,14 @@ export default function Customers({ initialFilter = 'all', serviceLocked = null,
   useEffect(() => {
     setSelectedCustomerIds((current) => current.filter((id) => filteredCustomerIds.includes(id)));
   }, [filteredCustomerIds]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, serviceLocked]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(filteredCustomers.length / pageSize))));
+  }, [filteredCustomers.length]);
 
   async function load() {
     setLoading(true);
@@ -666,7 +678,7 @@ export default function Customers({ initialFilter = 'all', serviceLocked = null,
               <tr><td className="table-cell text-slate-500" colSpan={tableColSpan}>Loading customers...</td></tr>
             ) : filteredCustomers.length === 0 ? (
               <tr><td className="table-cell text-slate-500" colSpan={tableColSpan}>No customers found.</td></tr>
-            ) : filteredCustomers.map((customer) => (
+            ) : pagedCustomers.map((customer) => (
               <tr key={customer.id}>
                 <td className="table-cell px-3">
                   <input
@@ -722,6 +734,7 @@ export default function Customers({ initialFilter = 'all', serviceLocked = null,
           </tbody>
         </table>
       </div>
+      <Pagination page={page} pageSize={pageSize} total={filteredCustomers.length} label="customers" onPageChange={setPage} />
 
       {openActionsId && actionsPosition && openCustomer && createPortal(
         <div

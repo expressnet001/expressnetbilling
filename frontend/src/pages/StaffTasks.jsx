@@ -14,6 +14,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
+import Pagination from '../components/Pagination';
 import { useAuth } from '../context/AuthContext';
 
 function items(data) {
@@ -110,6 +111,8 @@ export default function StaffTasks() {
   const [bounceReasons, setBounceReasons] = useState({});
   const [busyId, setBusyId] = useState('');
   const [expandedId, setExpandedId] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const load = async () => {
     try {
@@ -139,6 +142,11 @@ export default function StaffTasks() {
   }, [tasks]);
 
   const pendingTasks = useMemo(() => tasks.filter((t) => !isDone(t.status)), [tasks]);
+  const pagedPendingTasks = pendingTasks.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(pendingTasks.length / pageSize))));
+  }, [pendingTasks.length]);
 
   const updateTask = async (task, payload, message) => {
     setBusyId(task.id);
@@ -243,7 +251,7 @@ export default function StaffTasks() {
             {pendingTasks.length === 0 ? (
               <p className="py-8 text-center text-sm text-slate-500">No pending tasks. Nice work.</p>
             ) : (
-              pendingTasks.map((task) => {
+              pagedPendingTasks.map((task) => {
                 const due = dueMeta(task.due_date);
                 const isOpen = expandedId === task.id;
                 return (
@@ -324,9 +332,7 @@ export default function StaffTasks() {
           </div>
 
           {pendingTasks.length > 0 && (
-            <button type="button" className="mt-3 w-full text-center text-xs font-semibold hover:underline" style={{ color: 'var(--app-accent)' }} onClick={load}>
-              View all pending tasks
-            </button>
+            <Pagination page={page} pageSize={pageSize} total={pendingTasks.length} label="pending tasks" onPageChange={setPage} />
           )}
         </section>
 

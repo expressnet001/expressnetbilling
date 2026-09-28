@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
 import Modal from '../components/Modal';
+import Pagination from '../components/Pagination';
 import { useAuth } from '../context/AuthContext';
 import { canPerformAction } from '../utils/permissions';
 
@@ -73,6 +74,8 @@ export default function Equipment() {
   const [saving, setSaving] = useState(false);
   const [typeFilter, setTypeFilter] = useState('all');
   const [showForm, setShowForm] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const canCreate = canPerformAction(tenant, 'equipment', 'create');
   const canEdit = canPerformAction(tenant, 'equipment', 'edit');
   const canDelete = canPerformAction(tenant, 'equipment', 'delete');
@@ -199,6 +202,15 @@ export default function Equipment() {
     () => (typeFilter === 'all' ? assignments : assignments.filter((item) => item.itemType === typeFilter)),
     [assignments, typeFilter]
   );
+  const pagedAssignments = visibleAssignments.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [typeFilter]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(visibleAssignments.length / pageSize))));
+  }, [visibleAssignments.length]);
 
   const withStaffCount = assignments.filter((item) => item.itemType === 'tool' && item.status === 'with_staff').length;
   const lostCount = assignments.filter((item) => item.status === 'lost').length;
@@ -260,7 +272,7 @@ export default function Equipment() {
               </tr>
             </thead>
             <tbody>
-              {visibleAssignments.map((record) => (
+              {pagedAssignments.map((record) => (
                 <tr key={record.id} className="border-b border-slate-100 last:border-0">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -307,6 +319,7 @@ export default function Equipment() {
             </tbody>
           </table>
         )}
+        {visibleAssignments.length > 0 && <Pagination page={page} pageSize={pageSize} total={visibleAssignments.length} label="assignments" onPageChange={setPage} />}
       </div>
 
       {staffLoading && (

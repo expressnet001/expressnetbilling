@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useSearchParams } from 'react-router-dom';
 import api from '../api/axios';
+import Pagination from '../components/Pagination';
 
 const blankExpense = { id: '', type: 'SYSTEM_PAYMENT', amount: 0, method: 'Mpesa', date: '' };
 
@@ -47,6 +48,8 @@ export default function Expenses() {
   const [phone, setPhone] = useState('');
   const [payingSystem, setPayingSystem] = useState(false);
   const [loadingSubscription, setLoadingSubscription] = useState(true);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const loadSubscription = async () => {
     setLoadingSubscription(true);
@@ -75,6 +78,15 @@ export default function Expenses() {
     const needle = query.toLowerCase();
     return expenses.filter((expense) => `${expense.type} ${expense.method} ${expense.amount}`.toLowerCase().includes(needle));
   }, [expenses, query]);
+  const pagedExpenses = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(filtered.length / pageSize))));
+  }, [filtered.length]);
 
   const totals = useMemo(() => {
     const now = new Date();
@@ -195,7 +207,7 @@ export default function Expenses() {
             <tbody className="divide-y divide-slate-200 text-xs text-black">
               {filtered.length === 0 ? (
                 <tr><td className="px-5 py-10 text-center text-slate-500" colSpan="6">No expenses found.</td></tr>
-              ) : filtered.map((expense) => (
+              ) : pagedExpenses.map((expense) => (
                 <tr key={expense.id}>
                   <td className="px-5 py-4"><input type="checkbox" className="h-4 w-4 rounded border-slate-300" /></td>
                   <td className="px-5 py-4">{formatDate(expense.date)}</td>
@@ -219,6 +231,7 @@ export default function Expenses() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} pageSize={pageSize} total={filtered.length} label="expenses" onPageChange={setPage} />
       </section>
 
       {modalOpen && (

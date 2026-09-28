@@ -21,6 +21,7 @@ urlpatterns = [
     path("reports/expenses", views.report_expenses),
     path("profile", views.profile),
     path("settings/business", views.settings_business),
+    path("settings/payment-change/request", views.request_payment_change_code),
     path("settings/logo", views.settings_logo),
     path("settings/test-sms", views.settings_test_sms),
     path("settings/test-whatsapp", views.settings_test_whatsapp),

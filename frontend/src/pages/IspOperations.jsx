@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
 import Modal from '../components/Modal';
+import Pagination from '../components/Pagination';
 import { canPerformAction } from '../utils/permissions';
 import { useAuth } from '../context/AuthContext';
 
@@ -61,6 +62,8 @@ export default function IspOperations() {
   const [draft, setDraft] = useState(blankTask);
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   // Controls the task-type <select>: one of TASK_TYPES or OTHER_TASK_TYPE
   const [taskTypeChoice, setTaskTypeChoice] = useState(TASK_TYPES[0]);
   const canCreate = canPerformAction(tenant, 'tickets', 'create');
@@ -111,6 +114,15 @@ export default function IspOperations() {
   const filtered = useMemo(() => {
     return tickets.filter((ticket) => `${ticket.title} ${ticket.description} ${ticket.priority} ${ticket.status} ${ticket.assigned_to_name || ''} ${ticket.assigned_to_role || ''}`.toLowerCase().includes(query.toLowerCase()));
   }, [tickets, query]);
+  const pagedTickets = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(filtered.length / pageSize))));
+  }, [filtered.length]);
 
   // Keep dependent fields in sync whenever the task type changes
   const handleTaskTypeChange = (value) => {
@@ -358,7 +370,7 @@ export default function IspOperations() {
               <tbody className="divide-y divide-slate-100">
                 {filtered.length === 0 ? (
                   <tr><td className="table-cell text-slate-500" colSpan="8">No tasks found.</td></tr>
-                ) : filtered.map((ticket) => (
+                ) : pagedTickets.map((ticket) => (
                   <tr key={ticket.id} className="bg-white">
                     <td className="table-cell font-semibold text-slate-950">{ticket.title}</td>
                     <td className="table-cell max-w-xs truncate text-slate-500">{ticket.description || 'No description'}</td>
@@ -388,6 +400,7 @@ export default function IspOperations() {
                 ))}
               </tbody>
             </table>
+            <Pagination page={page} pageSize={pageSize} total={filtered.length} label="tasks" onPageChange={setPage} />
           </div>
         )}
       </section>

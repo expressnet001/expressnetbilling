@@ -114,6 +114,21 @@ DEFAULT_SITE = {
 }
 MASKED = "••••••••"
 SENSITIVE_FIELDS = {"password", "mikrotik_pass", }
+PAYMENT_SETTING_FIELDS = {
+    "payment_methods",
+    "payment_provider",
+    "payout_phone",
+    "bank_code",
+    "bank_name",
+    "bank_account_number",
+    "daraja_consumer_key",
+    "daraja_consumer_secret",
+    "daraja_shortcode",
+    "daraja_passkey",
+    "daraja_till_number",
+    "daraja_shortcode_type",
+    "daraja_environment",
+}
 
 
 def make_payment_access_token(tenant_id, payment_id):
@@ -2317,6 +2332,47 @@ def report_expenses(request):
 
 
 @csrf_exempt
+@api_view(["POST"])
+@tenant_required
+def request_payment_change_code(request):
+    tenant = request.tenant
+    phone = normalize_phone(tenant.get("phone") or tenant.get("support_phone"))
+    email = str(tenant.get("email") or tenant.get("support_email") or "").strip()
+    if not phone and not email:
+        return ok({"message": "Add a tenant phone number or email before changing payment settings."}, 400)
+
+    code = f"{secrets.randbelow(1000000):06d}"
+    challenge_id = secrets.token_urlsafe(18)
+    expires_at = (timezone.now() + timedelta(minutes=10)).isoformat()
+    challenge = {
+        "id": challenge_id,
+        "code_hash": hash_password(code),
+        "expires_at": expires_at,
+        "attempts": 0,
+        "used": False,
+        "created_at": iso_now(),
+    }
+    ref(f"tenants/{tenant['id']}/payment_change_challenge").set(challenge)
+    message = f"Your Expressnet payment settings confirmation code is {code}. It expires in 10 minutes. Do not share it."
+    channels = []
+    if phone:
+        whatsapp = send_whatsapp_message(phone, message, tenant)
+        if whatsapp.get("sent"):
+            channels.append("whatsapp")
+        sms = send_sms_message(phone, message, tenant)
+        if sms.get("sent"):
+            channels.append("sms")
+    if email:
+        sent = send_system_email("Payment settings confirmation code", message, [email])
+        if sent:
+            channels.append("email")
+    if not channels:
+        ref(f"tenants/{tenant['id']}/payment_change_challenge").delete()
+        return ok({"message": "The confirmation code could not be delivered. Check the tenant notification settings."}, 503)
+    return ok({"success": True, "challenge_id": challenge_id, "expires_in": 600, "channels": sorted(set(channels))})
+
+
+@csrf_exempt
 @api_view(["GET", "PATCH"])
 @tenant_required
 def settings_business(request):
@@ -2350,6 +2406,30 @@ def settings_business(request):
         "daraja_environment",
     ]
     updates = {}
+    requested_payment_fields = PAYMENT_SETTING_FIELDS.intersection(data)
+    changed_payment_fields = {
+        field for field in requested_payment_fields
+        if data.get(field) != request.tenant.get(field)
+    }
+    if changed_payment_fields:
+        challenge = ref(f"tenants/{tenant_id}/payment_change_challenge").get() or {}
+        challenge_id = str(data.get("payment_change_id") or "").strip()
+        challenge_code = str(data.get("payment_change_code") or "").strip()
+        expires_at = parse_datetime(str(challenge.get("expires_at") or ""))
+        if (
+            not challenge_id
+            or challenge_id != challenge.get("id")
+            or challenge.get("used")
+            or not expires_at
+            or expires_at <= timezone.now()
+            or int(challenge.get("attempts") or 0) >= 5
+            or not check_password(challenge_code, challenge.get("code_hash"))
+        ):
+            attempts = int(challenge.get("attempts") or 0) + 1 if challenge else 0
+            if challenge:
+                ref(f"tenants/{tenant_id}/payment_change_challenge").update({"attempts": attempts})
+            return ok({"message": "A valid payment settings confirmation code is required."}, 403)
+        ref(f"tenants/{tenant_id}/payment_change_challenge").update({"used": True, "used_at": iso_now()})
     for field in allowed:
         if field in data:
             if field == "dark_mode":

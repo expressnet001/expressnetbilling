@@ -1,8 +1,9 @@
 from celery import shared_task
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from .models import TenantSubscription
-from .services import iso_now, list_children, ref, set_customer_enabled, upsert_customer_access, write_audit_log
+from .services import iso_now, list_children, normalize_phone, ref, send_sms_message, send_whatsapp_message, set_customer_enabled, upsert_customer_access, write_audit_log
 
 """
 
@@ -69,3 +70,54 @@ def expire_customer_access():
             )
             count += 1
     return count
+
+
+@shared_task
+def notify_router_offline():
+    """Alert each tenant once when a linked MikroTik stops checking in."""
+    now = timezone.now()
+    threshold = now - timezone.timedelta(minutes=10)
+    alerted = 0
+    recovered = 0
+    for tenant in list_children("tenants"):
+        tenant_id = tenant.get("id")
+        if not tenant_id:
+            continue
+        linked = bool(
+            tenant.get("mikrotik_last_seen_at")
+            or tenant.get("mikrotik_router_snapshot")
+            or tenant.get("mikrotik_provisioning_status") in {"script_downloaded", "completed"}
+        )
+        if not linked:
+            continue
+        last_seen = parse_datetime(str(tenant.get("mikrotik_last_seen_at") or ""))
+        if last_seen and timezone.is_naive(last_seen):
+            last_seen = timezone.make_aware(last_seen, timezone.get_current_timezone())
+        offline = not last_seen or last_seen <= threshold
+        challenge_path = f"tenants/{tenant_id}"
+        if not offline:
+            if tenant.get("router_offline_notified_at"):
+                ref(challenge_path).update({"router_offline_notified_at": "", "router_recovered_at": iso_now()})
+                recovered += 1
+            continue
+        if tenant.get("router_offline_notified_at"):
+            continue
+        phone = normalize_phone(tenant.get("phone") or tenant.get("support_phone"))
+        if not phone:
+            continue
+        last_seen_text = last_seen.isoformat() if last_seen else "never"
+        message = (
+            f"{tenant.get('business_name') or 'Expressnet'} alert: your linked MikroTik router appears offline. "
+            f"Last check-in: {last_seen_text}. Please check power and internet connectivity."
+        )
+        results = []
+        whatsapp = send_whatsapp_message(phone, message, tenant)
+        if whatsapp.get("sent"):
+            results.append("whatsapp")
+        sms = send_sms_message(phone, message, tenant)
+        if sms.get("sent"):
+            results.append("sms")
+        if results:
+            ref(challenge_path).update({"router_offline_notified_at": iso_now(), "router_offline_notification_channels": results})
+            alerted += 1
+    return {"alerted": alerted, "recovered": recovered}

@@ -2,6 +2,7 @@ import { ChevronDown, FileText, Pencil, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
+import Pagination from '../components/Pagination';
 
 const blankInvoice = { id: '', customer: '', item: '', amount: 0, due_at: '', status: 'draft' };
 
@@ -47,6 +48,8 @@ export default function Invoices() {
   const [modalOpen, setModalOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   async function loadInvoices() {
     setLoading(true);
@@ -68,6 +71,15 @@ export default function Invoices() {
     const needle = query.toLowerCase();
     return invoices.filter((invoice) => `${invoice.customer} ${invoice.item} ${invoice.status} ${invoice.id}`.toLowerCase().includes(needle));
   }, [invoices, query]);
+  const pagedInvoices = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(filtered.length / pageSize))));
+  }, [filtered.length]);
 
   const totals = useMemo(() => ({
     paid: invoices.filter((invoice) => invoice.status === 'paid').reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
@@ -142,7 +154,7 @@ export default function Invoices() {
                 <tr><td className="px-5 py-10 text-center text-slate-500" colSpan="7">Loading invoices...</td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td className="px-5 py-10 text-center text-slate-500" colSpan="7">No invoices found.</td></tr>
-              ) : filtered.map((invoice) => (
+              ) : pagedInvoices.map((invoice) => (
                 <tr key={invoice.id}>
                   <td className="px-5 py-4 font-bold" style={{ color: 'var(--app-accent)' }}>{invoice.invoice_number || invoice.id}</td>
                   <td className="px-5 py-4">{invoice.customer || invoice.customer_name}</td>
@@ -161,6 +173,7 @@ export default function Invoices() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} pageSize={pageSize} total={filtered.length} label="invoices" onPageChange={setPage} />
       </section>
 
       {modalOpen && (

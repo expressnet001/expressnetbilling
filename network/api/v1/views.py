@@ -671,8 +671,8 @@ def _html_page(title, body, status=200):
     .pkg-title{{font-size:16px;font-weight:750;text-transform:uppercase;line-height:1.22;overflow-wrap:anywhere}}
     .pkg-meta{{margin-top:5px;font-size:14px;color:#cbd5e1}}
     form{{width:100%}}
-    input,button,.buy-btn,.close-link{{width:100%;min-height:42px;font:inherit;border-radius:7px;border:1px solid rgba(255,255,255,.12);padding:10px 12px;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}}
-    input{{background:#000;color:#fff;outline:none}}
+    input,select,button,.buy-btn,.close-link{{width:100%;min-height:42px;font:inherit;border-radius:7px;border:1px solid rgba(255,255,255,.12);padding:10px 12px;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}}
+    input,select{{background:#000;color:#fff;outline:none}}
     input::placeholder{{color:#8b93a1}}
     input:focus{{border-color:var(--portal-accent,#2600d8)}}
     button,.buy-btn{{background:var(--portal-accent,#2600d8);color:var(--portal-accent-contrast,#fff);border-color:var(--portal-accent,#2600d8);font-weight:700;cursor:pointer;box-shadow:0 12px 22px rgba(0,0,0,.45)}}
@@ -1077,6 +1077,7 @@ def captive_portal_page(request, tenant_id):
         if request.GET.get(key)
     )
     selected_payment_method = selected_daraja_method(tenant)
+    tv_packages = [pkg for pkg in packages if pkg.get("service_type") == "hotspot"]
     if packages:
         package_html_v2 = "".join(
             f"""
@@ -1088,7 +1089,6 @@ def captive_portal_page(request, tenant_id):
               </div>
               <div class="pkg-actions">
                 <a class="buy-btn" href="#pay-{html.escape(str(pkg.get('id')), quote=True)}">Buy</a>
-                {f'<a class="buy-btn secondary" href="#tv-{html.escape(str(pkg.get("id")), quote=True)}">Buy for TV</a>' if pkg.get('service_type') == 'hotspot' else ''}
               </div>
             </div>"""
             for pkg in packages
@@ -1118,32 +1118,31 @@ def captive_portal_page(request, tenant_id):
             </div>"""
             for pkg in packages
         )
-        tv_payment_modals_v2 = "".join(
-            f"""
-            <div id="tv-{html.escape(str(pkg.get('id')), quote=True)}" class="pay-modal" aria-hidden="true">
-              <form class="pay-box" method="post" action="/api/captive/{html.escape(str(tenant_id))}/pay">
-                <div class="pay-head">
-                  <div>
-                    <h2>{html.escape(str(pkg.get('name') or 'Buy package'))} for TV</h2>
-                    <p>Enter the TV MAC address and your M-Pesa phone number.</p>
-                  </div>
-                  <a class="close-btn" href="#" aria-label="Close">x</a>
-                </div>
-                <input type="hidden" name="package_id" value="{html.escape(str(pkg.get('id')))}">
-                <input type="hidden" name="service_type" value="tv">
-                <input type="hidden" name="payment_method" value="{html.escape(selected_payment_method)}">
-                {hidden}
-                <input name="mac_address" required placeholder="TV MAC address e.g. AA:BB:CC:DD:EE:FF" autocomplete="off">
-                <input name="phone" inputmode="tel" required placeholder="M-Pesa/phone number" autocomplete="tel">
-                <div class="modal-actions">
-                  <a class="secondary close-link" href="#">Cancel</a>
-                  <button type="submit">Send prompt</button>
-                </div>
-              </form>
-            </div>"""
-            for pkg in packages
-            if pkg.get("service_type") == "hotspot"
-        )
+        if tv_packages:
+            tv_options = "".join(
+                f"<option value='{html.escape(str(pkg.get('id')), quote=True)}'>{html.escape(str(pkg.get('name') or 'Package'))} - Ksh {html.escape(str(pkg.get('amount_payable') or pkg.get('price') or 0))}</option>"
+                for pkg in tv_packages
+            )
+            tv_purchase_html_v2 = f"""
+              <div class="card quick">
+                <strong>Buy internet for TV</strong>
+                <p class="muted">Select a package, then enter the TV MAC address and your M-Pesa phone number.</p>
+                <form method="post" action="/api/captive/{html.escape(str(tenant_id))}/pay">
+                  <input type="hidden" name="service_type" value="tv">
+                  <input type="hidden" name="payment_method" value="{html.escape(selected_payment_method)}">
+                  {hidden}
+                  <select name="package_id" required aria-label="TV package">
+                    <option value="">Select a package</option>
+                    {tv_options}
+                  </select>
+                  <input name="mac_address" required placeholder="TV MAC address e.g. AA:BB:CC:DD:EE:FF" autocomplete="off">
+                  <input name="phone" inputmode="tel" required placeholder="M-Pesa/phone number" autocomplete="tel">
+                  <button type="submit">Buy for TV</button>
+                </form>
+              </div>
+            """
+        else:
+            tv_purchase_html_v2 = ""
     else:
         total_packages = len(list_children(f"tenants/{tenant_id}/packages"))
         package_html_v2 = (
@@ -1152,7 +1151,7 @@ def captive_portal_page(request, tenant_id):
             else "<div class='alert'>No packages are configured yet. Please contact the provider.</div>"
         )
         payment_modals_v2 = ""
-        tv_payment_modals_v2 = ""
+        tv_purchase_html_v2 = ""
 
     link_login_v2 = str(request.GET.get("link_login") or request.GET.get("link-login") or "").strip()
     voucher_autocomplete = ' autocomplete="one-time-code"' if link_login_v2 else ""
@@ -1194,9 +1193,9 @@ def captive_portal_page(request, tenant_id):
         {payment_notice}
         <div class="section-title">Unlimited packages</div>
         {package_html_v2}
+        {tv_purchase_html_v2}
         {voucher_html_v2}
         {payment_modals_v2}
-        {tv_payment_modals_v2}
       </main>
       </div>
     """

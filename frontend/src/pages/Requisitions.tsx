@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
 import Modal from '../components/Modal';
+import Pagination from '../components/Pagination';
 
 const statuses = ['pending', 'approved', 'issued', 'rejected'];
 const blankForm = { type: 'tools', title: '', reason: '' };
@@ -25,6 +26,8 @@ export default function Requisitions() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(blankForm);
   const [saving, setSaving] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const load = async () => {
     try {
@@ -43,6 +46,15 @@ export default function Requisitions() {
     const value = query.toLowerCase();
     return requisitions.filter((item) => `${item.title} ${item.type} ${item.reason} ${item.requested_by_name} ${item.status}`.toLowerCase().includes(value));
   }, [query, requisitions]);
+  const pagedRequisitions = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(filtered.length / pageSize))));
+  }, [filtered.length]);
 
   const updateStatus = async (requisition, status) => {
     setBusyId(requisition.id);
@@ -126,7 +138,7 @@ export default function Requisitions() {
           <tbody className="divide-y divide-slate-100">
             {filtered.length === 0 ? (
               <tr><td className="table-cell text-slate-500" colSpan={6}>No requisitions found.</td></tr>
-            ) : filtered.map((requisition) => (
+            ) : pagedRequisitions.map((requisition) => (
               <tr key={requisition.id}>
                 <td className="table-cell font-medium text-slate-950">{requisition.title}</td>
                 <td className="table-cell capitalize">{requisition.type}</td>
@@ -153,6 +165,7 @@ export default function Requisitions() {
             ))}
           </tbody>
         </table>
+        <Pagination page={page} pageSize={pageSize} total={filtered.length} label="requisitions" onPageChange={setPage} />
       </section>
 
       {modalOpen && (

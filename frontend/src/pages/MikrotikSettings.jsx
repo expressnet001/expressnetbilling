@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
+import Pagination from '../components/Pagination';
 
 function toDate(value) {
   if (!value) return null;
@@ -42,6 +43,8 @@ export default function MikrotikSettings() {
   const [search, setSearch] = useState('');
   const [openActionId, setOpenActionId] = useState('');
   const [actionPosition, setActionPosition] = useState(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const rows = useMemo(() => {
     const linked = config?.linked_routers || {};
@@ -77,6 +80,15 @@ export default function MikrotikSettings() {
     if (filter === 'offline') return item.status !== 'online';
     return true;
   });
+  const pagedRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter, search]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(filteredRows.length / pageSize))));
+  }, [filteredRows.length]);
 
   async function loadConfig({ silent = false } = {}) {
     if (!silent) setLoading(true);
@@ -233,7 +245,7 @@ export default function MikrotikSettings() {
                   <tr>
                     <td className="table-cell text-slate-500" colSpan="10">No MikroTik routers linked yet.</td>
                   </tr>
-                ) : filteredRows.map((router) => (
+                ) : pagedRows.map((router) => (
                   <tr key={router.id}>
                     <td className="table-cell font-medium text-slate-950">
                       <div>{router.routerName || router.boardName}</div>
@@ -309,10 +321,7 @@ export default function MikrotikSettings() {
             </table>
           </div>
 
-          <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-xs text-slate-600">
-            <span>Showing {filteredRows.length} result{filteredRows.length === 1 ? '' : 's'}</span>
-            <span className="rounded-md border border-slate-200 px-3 py-2">Per page&nbsp;&nbsp;10</span>
-          </div>
+          <Pagination page={page} pageSize={pageSize} total={filteredRows.length} label="routers" onPageChange={setPage} />
         </div>
       </section>
     </div>

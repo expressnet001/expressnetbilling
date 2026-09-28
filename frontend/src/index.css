@@ -172,6 +172,27 @@ html[data-theme="dark"] .tenant-app tr.bg-slate-50 { background-color: var(--app
     color: var(--app-text);
   }
 
+  .tenant-app table {
+    border-collapse: collapse;
+  }
+
+  .tenant-app table thead th {
+    background: var(--app-panel-muted);
+    color: var(--app-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
+  .tenant-app table tbody tr {
+    transition: background-color .15s ease;
+  }
+
+  .tenant-app table tbody tr:hover {
+    background: var(--app-accent-muted) !important;
+  }
+
   .page-title {
     @apply text-[20px] font-medium leading-7;
     color: var(--app-text);

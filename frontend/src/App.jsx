@@ -42,7 +42,7 @@ import StaffReports from './pages/StaffReports';
 import StaffRequisitions from './pages/StaffRequisitions';
 import StaffTasks from './pages/StaffTasks';
 import Vouchers from './pages/Vouchers';
-import { ADMIN_DASHBOARD_PATH, ADMIN_LOGIN_PATH, ADMIN_PATH, adminPath } from './config/adminPaths';
+import { ADMIN_DASHBOARD_PATH, ADMIN_LOGIN_PATH, ADMIN_PATH, adminPath, isAdminHost } from './config/adminPaths';
 import { TENANT_THEME_EVENT, applyTenantTheme } from './utils/theme';
 
 function DashboardLayout() {
@@ -109,12 +109,15 @@ function DashboardLayout() {
 }
 
 export default function App() {
-  const isAdminHost = window.location.hostname.split('.')[0] === 'admin';
+  const hostname = window.location.hostname.toLowerCase();
+  const appSubdomain = String(import.meta.env.VITE_APP_SUBDOMAIN || 'app').trim().toLowerCase();
+  const onAdminHost = isAdminHost();
+  const isAppHost = hostname === appSubdomain || hostname.startsWith(`${appSubdomain}.`);
 
   return (
     <Routes>
-      <Route path="/" element={isAdminHost ? <Navigate to={ADMIN_LOGIN_PATH} replace /> : <Home />} />
-      <Route path="/login" element={<Login />} />
+      <Route path="/" element={onAdminHost ? <AdminLogin /> : isAppHost ? <Login /> : <Home />} />
+      <Route path="/login" element={onAdminHost ? <AdminLogin /> : <Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/portal/:tenantId" element={<CustomerPortal />} />
       <Route path="/customers/:tenantId" element={<CustomerPortal />} />

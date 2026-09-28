@@ -1,4 +1,4 @@
-import { CheckCheck, ChevronDown, Download, Eye, MoreVertical, Search, X } from 'lucide-react';
+import { Download, Eye } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
@@ -13,12 +13,6 @@ function toDate(value) {
 
 function formatKES(value) {
   return `Ksh ${Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
-}
-
-function formatDate(value) {
-  const date = toDate(value);
-  if (!date) return '-';
-  return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 const ACCENT = 'var(--app-accent)';
@@ -150,13 +144,9 @@ export default function Reports({ type = 'finance' }) {
   const copy = reportCopy[reportType];
   const [payments, setPayments] = useState([]);
   const [dashboard, setDashboard] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState('');
-  const [tab, setTab] = useState('checked');
 
   useEffect(() => {
     async function load() {
-      setLoading(true);
       try {
         const [paymentsResponse, dashboardResponse] = await Promise.all([
           api.get('/payments?page_size=100'),
@@ -167,19 +157,12 @@ export default function Reports({ type = 'finance' }) {
         setDashboard(dashboardResponse.data);
       } catch (error) {
         toast.error(error.response?.data?.message || 'Failed to load report');
-      } finally {
-        setLoading(false);
       }
     }
     load();
   }, []);
 
   const successfulPayments = useMemo(() => payments.filter((payment) => payment.status === 'success'), [payments]);
-  const rows = useMemo(() => {
-    const base = tab === 'checked' ? successfulPayments : payments.filter((payment) => payment.status !== 'success');
-    const needle = query.toLowerCase();
-    return base.filter((payment) => `${payment.customer_name || ''} ${payment.phone || ''} ${payment.payment_code || ''}`.toLowerCase().includes(needle));
-  }, [payments, query, successfulPayments, tab]);
 
   const totals = useMemo(() => {
     const now = new Date();
@@ -223,7 +206,7 @@ export default function Reports({ type = 'finance' }) {
           </div>
           <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-900 text-[10px]">i</span>
         </div>
-        <button type="button" className="btn-primary h-9 px-4 shadow-md" onClick={() => exportCsv(rows, copy.exportName)}>
+        <button type="button" className="btn-primary h-9 px-4 shadow-md" onClick={() => exportCsv(reportType === 'finance' ? successfulPayments : payments, copy.exportName)}>
           <Download size={14} />
           Export Report
         </button>
@@ -278,62 +261,6 @@ export default function Reports({ type = 'finance' }) {
         )}
       </section>
 
-      {reportType === 'finance' && <section className="border-b border-slate-200">
-        <div className="flex gap-6">
-          {[
-            ['checked', 'Checked payments', CheckCheck],
-            ['unchecked', 'Unchecked payments', X],
-          ].map(([key, label, Icon]) => (
-            <button key={key} type="button" className={`inline-flex h-10 items-center gap-2 border-b-2 text-xs font-medium ${tab === key ? 'border-[var(--app-accent)] text-[var(--app-accent)]' : 'border-transparent text-slate-500'}`} onClick={() => setTab(key)}>
-              <Icon size={15} />
-              {label}
-            </button>
-          ))}
-        </div>
-      </section>}
-
-      {reportType === 'finance' && <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-        <div className="flex justify-end border-b border-slate-200 p-3">
-          <label className="relative block w-full max-w-xs">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input className="form-input mt-0 h-9 pl-9" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} />
-          </label>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-[980px] w-full">
-            <thead className="bg-slate-50 text-left text-xs font-semibold text-black">
-              <tr>
-                <th className="w-12 px-5 py-4"><input type="checkbox" className="h-4 w-4 rounded border-slate-300" /></th>
-                {['User', 'Phone', 'Receipt No.', 'Amount', 'Checked', 'Paid At', 'Disbursement'].map((heading) => (
-                  <th key={heading} className="px-5 py-4">
-                    <span className="inline-flex items-center gap-1">{heading}<ChevronDown size={15} className="text-slate-400" /></span>
-                  </th>
-                ))}
-                <th className="px-5 py-4" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 text-xs text-black">
-              {loading ? (
-                <tr><td className="px-5 py-10 text-center text-slate-500" colSpan="9">Loading report...</td></tr>
-              ) : rows.length === 0 ? (
-                <tr><td className="px-5 py-10 text-center text-slate-500" colSpan="9">No payments found.</td></tr>
-              ) : rows.map((payment) => (
-                <tr key={payment.id}>
-                  <td className="px-5 py-4"><input type="checkbox" className="h-4 w-4 rounded border-slate-300" /></td>
-                  <td className="px-5 py-4 font-bold" style={{ color: 'var(--app-accent)' }}>{payment.customer_name || payment.access_username || '-'}</td>
-                  <td className="px-5 py-4">{payment.phone || '-'}</td>
-                  <td className="px-5 py-4">{payment.payment_code || '-'}</td>
-                  <td className="px-5 py-4">{formatKES(payment.amount)}</td>
-                  <td className="px-5 py-4"><span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] text-emerald-700">{payment.status === 'success' ? 'Yes' : 'No'}</span></td>
-                  <td className="px-5 py-4">{formatDate(payment.paid_at || payment.created_at)}</td>
-                  <td className="px-5 py-4"><span className="rounded-md border px-2 py-1 text-[10px]" style={{ borderColor: 'var(--app-accent-soft)', background: 'var(--app-accent-muted)', color: 'var(--app-accent)' }}>{payment.provider === 'voucher' ? 'Voucher' : 'Direct'}</span></td>
-                  <td className="px-5 py-4 text-right" style={{ color: 'var(--app-accent)' }}><MoreVertical size={16} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>}
     </div>
   );
 }

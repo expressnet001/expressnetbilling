@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
 import Modal from '../components/Modal';
+import Pagination from '../components/Pagination';
 import StatusBadge from '../components/StatusBadge';
 
 function packageType(pkg) {
@@ -22,6 +23,8 @@ export default function Vouchers() {
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const load = async () => {
     try {
@@ -45,6 +48,15 @@ export default function Vouchers() {
   );
   const filteredIds = useMemo(() => filtered.map((voucher) => voucher.id).filter(Boolean), [filtered]);
   const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.includes(id));
+  const pagedVouchers = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(filtered.length / pageSize))));
+  }, [filtered.length]);
 
   const createVoucher = async (event) => {
     event.preventDefault();
@@ -197,7 +209,7 @@ export default function Vouchers() {
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr><td className="table-cell text-slate-500" colSpan="8">No vouchers found.</td></tr>
-              ) : filtered.map((voucher) => (
+              ) : pagedVouchers.map((voucher) => (
                 <tr key={voucher.id}>
                   <td className="table-cell">
                     <input
@@ -234,6 +246,7 @@ export default function Vouchers() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} pageSize={pageSize} total={filtered.length} label="vouchers" onPageChange={setPage} />
       </section>
 
       {modalOpen && (
