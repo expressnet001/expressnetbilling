@@ -1,5 +1,7 @@
 from functools import wraps
 
+from django.conf import settings
+from django.core.cache import cache
 from rest_framework.response import Response
 from django.utils import timezone
 
@@ -84,25 +86,37 @@ def tenant_required(view):
             return Response({"message": "No token provided"}, status=401)
         try:
             decoded = decode_tenant_token(token)
-            tenant = Tenant.objects.filter(pk=decoded["id"]).first()
-            if not tenant:
-                return Response({"message": "Tenant not found"}, status=401)
+            tenant_id = str(decoded["id"])
+            cache_key = f"tenant_auth:{tenant_id}"
+            cached_tenant = cache.get(cache_key)
+            if cached_tenant:
+                tenant_data = dict(cached_tenant)
+            else:
+                tenant = Tenant.objects.filter(pk=tenant_id).first()
+                if not tenant:
+                    return Response({"message": "Tenant not found"}, status=401)
+                tenant_data = tenant.as_dict(include_id=True)
+                # Cache only the existing password hash, never a plaintext password.
+                tenant_data["password"] = tenant.password
+                subscription = TenantSubscription.objects.filter(tenant=tenant).only("expires_at").first()
+                if tenant.status == "active" and subscription and subscription.expires_at and subscription.expires_at < timezone.now():
+                    tenant.status = "suspended"
+                    tenant.save(update_fields=["status", "updated_at"])
+                    tenant_data["status"] = "suspended"
+                    ref(f"tenants/{tenant.pk}").update(
+                        {
+                            "status": "suspended",
+                            "suspended_reason": "expired_subscription",
+                            "subscription_expired_at": subscription.expires_at.isoformat(),
+                        }
+                    )
+                cache.set(cache_key, tenant_data, timeout=max(1, int(getattr(settings, "TENANT_AUTH_CACHE_SECONDS", 5))))
             normalized_path = _normalized_api_path(request)
-            subscription = TenantSubscription.objects.filter(tenant=tenant).first()
-            if tenant.status == "active" and subscription and subscription.expires_at and subscription.expires_at < timezone.now():
-                tenant.status = "suspended"
-                tenant.save(update_fields=["status", "updated_at"])
-                ref(f"tenants/{tenant.pk}").update(
-                    {
-                        "status": "suspended",
-                        "suspended_reason": "expired_subscription",
-                        "subscription_expired_at": subscription.expires_at.isoformat(),
-                    }
-                )
-            if tenant.status != "active":
-                if tenant.status == "suspended" and any(normalized_path.startswith(prefix) for prefix in SUBSCRIPTION_PAYMENT_PREFIXES):
+            tenant_status = tenant_data.get("status")
+            if tenant_status != "active":
+                if tenant_status == "suspended" and any(normalized_path.startswith(prefix) for prefix in SUBSCRIPTION_PAYMENT_PREFIXES):
                     pass
-                elif tenant.status == "suspended":
+                elif tenant_status == "suspended":
                     return Response(
                         {
                             "message": "Your subscription has expired. Please pay to continue using the billing system.",
@@ -113,8 +127,7 @@ def tenant_required(view):
                     )
                 else:
                     return Response({"message": "Your account is pending admin activation."}, status=403)
-            request.tenant = tenant.as_dict(include_id=True)
-            request.tenant["password"] = tenant.password
+            request.tenant = tenant_data
             request.tenant_member = None
             member_id = decoded.get("member_id")
             if member_id:

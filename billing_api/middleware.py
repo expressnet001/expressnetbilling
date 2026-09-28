@@ -2,6 +2,7 @@ import re
 import time
 from collections import defaultdict, deque
 
+import redis
 from django.conf import settings
 from django.http import JsonResponse
 
@@ -11,6 +12,19 @@ _SUSPICIOUS_REQUEST_RE = re.compile(
     r"(?:\.\./|%2e%2e|%00|<script|javascript:|union(?:\s|%20|\+)+select|(?:/|%5c)(?:etc/passwd|\.env)|wp-admin|wp-login|phpmyadmin)",
     re.IGNORECASE,
 )
+_redis_client = None
+
+
+def _get_redis_client():
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.Redis.from_url(
+            settings.REDIS_URL,
+            socket_connect_timeout=0.2,
+            socket_timeout=0.2,
+            health_check_interval=30,
+        )
+    return _redis_client
 
 
 def _host_without_port(request):
@@ -84,9 +98,7 @@ class ApiGatewayMiddleware:
         key = (_client_ip(request), request.method.upper(), api_path)
         now = time.time()
         try:
-            import redis
-
-            client = redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=0.2, socket_timeout=0.2)
+            client = _get_redis_client()
             redis_key = "gateway_rl:" + ":".join(str(part).replace("/", "_") for part in key)
             count = client.incr(redis_key)
             if count == 1:
@@ -162,8 +174,7 @@ class SimpleRateLimitMiddleware:
             ip = request.META.get("HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", "")).split(",")[0].strip()
             key = (request.method.upper(), request.path.rstrip("/"), ip)
             try:
-                import redis
-                client = redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=0.2, socket_timeout=0.2)
+                client = _get_redis_client()
                 redis_key = "rl:" + ":".join(str(part) for part in key)
                 count = client.incr(redis_key)
                 if count == 1:
