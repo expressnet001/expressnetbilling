@@ -3091,6 +3091,21 @@ def _default_wireguard_router_tunnel_ip(tenant):
     return f"10.9.{third_octet}.{fourth_octet}/16"
 
 
+def _is_non_public_ip(value):
+    """Return True for addresses that need an explicit private-network route."""
+    try:
+        address = ipaddress.ip_address(str(value or "").strip().split("/", 1)[0])
+    except ValueError:
+        return False
+    return (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
 def _wireguard_server_config(tenant, base_url=""):
     public_key = _config_value(
         tenant,
@@ -3120,6 +3135,13 @@ def _wireguard_server_config(tenant, base_url=""):
         missing.append("WG_SERVER_PUBLIC_KEY")
     if not endpoint:
         missing.append("WG_SERVER_ENDPOINT")
+    # A private endpoint is valid only when the deployment explicitly opts in.
+    # Otherwise RouterOS may stall while resolving/reaching an address that is
+    # only available inside the server's private network.
+    allow_private_endpoint = str(os.getenv("ALLOW_PRIVATE_WG_ENDPOINT", "")).lower() in {"1", "true", "yes", "on"}
+    if endpoint and _is_non_public_ip(endpoint) and not allow_private_endpoint:
+        missing.append("WG_SERVER_ENDPOINT_PUBLIC")
+        endpoint = ""
     if not tunnel_ip:
         missing.append("WG_SERVER_TUNNEL_IP")
     return {
@@ -3156,12 +3178,14 @@ def _radius_server_config(tenant, wg_config=None, base_url=""):
         source_ip = source_ip or str((tenant or {}).get("wg_tunnel_ip") or os.getenv("WG_ROUTER_TUNNEL_IP") or os.getenv("WIREGUARD_ROUTER_TUNNEL_IP") or _default_wireguard_router_tunnel_ip(tenant)).split("/", 1)[0]
     auth_port = _config_value(tenant, ("RADIUS_AUTH_PORT",), ("radius_auth_port",), "1812")
     acct_port = _config_value(tenant, ("RADIUS_ACCT_PORT",), ("radius_acct_port",), "1813")
+    private_without_tunnel = _is_non_public_ip(server_ip) and not wg_config.get("ready")
     return {
         "server_ip": server_ip,
         "source_ip": source_ip,
         "auth_port": auth_port,
         "acct_port": acct_port,
-        "ready": bool(server_ip),
+        "ready": bool(server_ip) and not private_without_tunnel,
+        "disabled_reason": "private RADIUS address requires a ready WireGuard tunnel" if private_without_tunnel else "",
         "mode": "wireguard" if wg_config.get("ready") and server_ip == wg_config.get("tunnel_ip") else "direct",
     }
 
@@ -3546,6 +3570,12 @@ def router_provision_script(request, token):
     vpn_interface_enabled = bool(wg_config["endpoint"] and wg_config["tunnel_ip"])
     vpn_peer_enabled = bool(wg_config["ready"])
     radius_enabled_for_router = bool(radius_config["ready"])
+    if radius_config.get("disabled_reason"):
+        logger.warning(
+            "MikroTik provisioning tenant=%s: RADIUS disabled; %s",
+            tenant_id,
+            radius_config["disabled_reason"],
+        )
     wg_server_public_key = wg_config["public_key"]
     wg_server_endpoint = wg_config["endpoint"]
     wg_server_port = wg_config["port"]
