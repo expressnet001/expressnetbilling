@@ -3453,8 +3453,11 @@ def _router_snapshot_fetch_script(snapshot_url):
 @permission_classes([AllowAny])  # Safely opens the wall for MikroTik requests
 def router_provision_script(request, token):
     user_agent = request.META.get("HTTP_USER_AGENT", "")
+    # RouterOS does not guarantee a stable User-Agent across RouterOS versions
+    # and may omit it entirely. The signed, short-lived provisioning token is
+    # the actual authentication mechanism for this public bootstrap endpoint.
     if user_agent and "Mikrotik" not in user_agent and "RouterOS" not in user_agent and "curl" not in user_agent.lower():
-        return HttpResponse("Forbidden: Invalid Access Point.", status=403, content_type="text/plain")
+        logger.info("Provisioning request has an unexpected User-Agent: %s", user_agent[:120])
 
     try:
         payload = jwt.decode(token, _get_jwt_secret("JWT_SECRET"), algorithms=["HS256"])
