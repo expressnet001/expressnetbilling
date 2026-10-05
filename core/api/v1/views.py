@@ -20,6 +20,7 @@ from django.core.files.storage import FileSystemStorage
 from django.core.management import call_command
 from django.core.mail import EmailMultiAlternatives, send_mail
 from django.core.paginator import Paginator
+from django.core import signing
 from django.db import IntegrityError, close_old_connections, connection
 from django.db.utils import OperationalError
 from django.db.models import Count, Sum
@@ -85,6 +86,7 @@ from billing_api.services import (
 )
 
 logger = logging.getLogger(__name__)
+TENANT_LOGIN_2FA_MAX_AGE_SECONDS = 10 * 60
 
 
 DEFAULT_SITE = {
@@ -212,6 +214,54 @@ def send_login_verification_email(recipient_email, code):
             from_email,
         )
         return 0
+
+
+def _tenant_login_challenge_key(challenge_id):
+    return f"tenant_login_2fa:{challenge_id}"
+
+
+def _sign_tenant_login_challenge(challenge):
+    return signing.dumps(challenge, salt="tenant-login-2fa")
+
+
+def _load_tenant_login_challenge(challenge_id):
+    challenge_id = str(challenge_id or "").strip()
+    if not challenge_id:
+        return None
+    try:
+        challenge = cache.get(_tenant_login_challenge_key(challenge_id))
+        if challenge:
+            return challenge
+    except Exception:
+        logger.warning("Tenant login verification cache lookup unavailable", exc_info=True)
+    try:
+        return signing.loads(
+            challenge_id,
+            salt="tenant-login-2fa",
+            max_age=TENANT_LOGIN_2FA_MAX_AGE_SECONDS,
+        )
+    except (signing.BadSignature, signing.SignatureExpired):
+        return None
+
+
+def _store_tenant_login_challenge(challenge):
+    challenge_id = _sign_tenant_login_challenge(challenge)
+    try:
+        cache.set(
+            _tenant_login_challenge_key(challenge_id),
+            challenge,
+            timeout=TENANT_LOGIN_2FA_MAX_AGE_SECONDS,
+        )
+    except Exception:
+        logger.warning("Tenant login verification cache storage unavailable", exc_info=True)
+    return challenge_id
+
+
+def _delete_tenant_login_challenge(challenge_id):
+    try:
+        cache.delete(_tenant_login_challenge_key(challenge_id))
+    except Exception:
+        logger.warning("Tenant login verification cache cleanup unavailable", exc_info=True)
 
 
 def _login_failure_key(request, email):
@@ -842,7 +892,7 @@ def auth_login(request):
     data = body(request)
     if data.get("resend_challenge_id"):
         challenge_id = str(data.get("resend_challenge_id") or "").strip()
-        challenge = cache.get(f"tenant_login_2fa:{challenge_id}")
+        challenge = _load_tenant_login_challenge(challenge_id)
         if not challenge:
             return ok({"message": "Invalid or expired verification code"}, 401)
         sent = send_login_verification_email(challenge.get("email"), challenge.get("code"))
@@ -853,10 +903,10 @@ def auth_login(request):
     if data.get("challenge_id"):
         challenge_id = str(data.get("challenge_id") or "").strip()
         code = "".join(ch for ch in str(data.get("code") or "") if ch.isdigit())
-        challenge = cache.get(f"tenant_login_2fa:{challenge_id}")
+        challenge = _load_tenant_login_challenge(challenge_id)
         if not challenge or not code or code != str(challenge.get("code")):
             return ok({"message": "Invalid or expired verification code"}, 401)
-        cache.delete(f"tenant_login_2fa:{challenge_id}")
+        _delete_tenant_login_challenge(challenge_id)
         tenant_obj = Tenant.objects.filter(pk=challenge.get("tenant_id")).first()
         if not tenant_obj:
             return ok({"message": "Tenant not found"}, 401)
@@ -879,11 +929,8 @@ def auth_login(request):
             except Exception as exc:
                 return ok({"message": f"Server configuration error: {exc}"}, 500)
         code = f"{secrets.randbelow(1000000):06d}"
-        challenge_id = secrets.token_urlsafe(24)
-        cache.set(
-            f"tenant_login_2fa:{challenge_id}",
-            {"tenant_id": tenant["id"], "member_id": member_id, "code": code, "email": recipient_email},
-            timeout=10 * 60,
+        challenge_id = _store_tenant_login_challenge(
+            {"tenant_id": tenant["id"], "member_id": member_id, "code": code, "email": recipient_email}
         )
         sent = send_login_verification_email(recipient_email, code)
         if not sent:
