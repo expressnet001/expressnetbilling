@@ -10,6 +10,7 @@ api.interceptors.request.use((config) => {
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+    config.__hadTenantToken = true;
   }
 
   return config;
@@ -22,9 +23,10 @@ api.interceptors.response.use(
       return Promise.reject(new Error('The server took too long to respond. Please try again.'));
     }
 
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && error.config?.__hadTenantToken) {
       localStorage.removeItem('billing_saas_token');
       localStorage.removeItem('billing_saas_tenant');
+      localStorage.removeItem('billing_saas_last_activity');
 
       if (window.location.pathname !== '/login') {
         window.location.assign('/login');

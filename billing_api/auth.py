@@ -1,5 +1,7 @@
+import logging
 from functools import wraps
 
+import jwt
 from django.conf import settings
 from django.core.cache import cache
 from rest_framework.response import Response
@@ -7,6 +9,8 @@ from django.utils import timezone
 
 from .models import Tenant, TenantSubscription
 from .services import decode_admin_token, decode_tenant_token, ref
+
+logger = logging.getLogger(__name__)
 
 PAGE_RULES = [
     ("staff_tasks", ("staff/tasks",)),
@@ -86,9 +90,23 @@ def tenant_required(view):
             return Response({"message": "No token provided"}, status=401)
         try:
             decoded = decode_tenant_token(token)
-            tenant_id = str(decoded["id"])
+        except jwt.ExpiredSignatureError:
+            return Response({"message": "Session expired. Please log in again."}, status=401)
+        except (jwt.InvalidTokenError, KeyError, TypeError):
+            return Response({"message": "Invalid token"}, status=401)
+
+        tenant_id = str(decoded.get("id") or "")
+        if not tenant_id:
+            return Response({"message": "Invalid token"}, status=401)
+
+        try:
             cache_key = f"tenant_auth:{tenant_id}"
             cached_tenant = cache.get(cache_key)
+        except Exception:
+            logger.warning("Tenant auth cache lookup unavailable tenant=%s", tenant_id, exc_info=True)
+            cached_tenant = None
+
+        try:
             if cached_tenant:
                 tenant_data = dict(cached_tenant)
             else:
@@ -110,7 +128,10 @@ def tenant_required(view):
                             "subscription_expired_at": subscription.expires_at.isoformat(),
                         }
                     )
-                cache.set(cache_key, tenant_data, timeout=max(1, int(getattr(settings, "TENANT_AUTH_CACHE_SECONDS", 5))))
+                try:
+                    cache.set(cache_key, tenant_data, timeout=max(1, int(getattr(settings, "TENANT_AUTH_CACHE_SECONDS", 5))))
+                except Exception:
+                    logger.warning("Tenant auth cache storage unavailable tenant=%s", tenant_id, exc_info=True)
             normalized_path = _normalized_api_path(request)
             tenant_status = tenant_data.get("status")
             if tenant_status != "active":
@@ -148,7 +169,8 @@ def tenant_required(view):
                 request.tenant["role"] = "tenant_admin"
                 request.tenant["is_admin"] = True
         except Exception:
-            return Response({"message": "Invalid token"}, status=401)
+            logger.exception("Tenant authentication failed after token decode tenant=%s", tenant_id)
+            return Response({"message": "Could not verify your session. Please try again."}, status=503)
         return view(request, *args, **kwargs)
 
     return wrapped
