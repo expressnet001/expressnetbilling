@@ -772,6 +772,12 @@ def ensure_hotspot_captive_portal(tenant, base_url=None):
             pass
         upsert_router_item(
             api,
+            ("ip", "firewall", "nat"),
+            {"chain": "srcnat", "src-address": "172.31.0.0/16", "comment": "billing-saas hotspot masquerade"},
+            {"chain": "srcnat", "src-address": "172.31.0.0/16", "action": "masquerade", "comment": "billing-saas hotspot masquerade"},
+        )
+        upsert_router_item(
+            api,
             ("ip", "hotspot", "profile"),
             {"name": profile_name},
             {
@@ -1090,6 +1096,12 @@ def configure_router_port(tenant, interface_name, service_type, profile_name="de
             {"address": "172.31.0.0/16"},
             {"address": "172.31.0.0/16", "gateway": "172.31.0.1", "dns-server": "172.31.0.1"},
         )
+        upsert_router_item(
+            api,
+            ("ip", "firewall", "nat"),
+            {"chain": "srcnat", "src-address": "172.31.0.0/16", "comment": "billing-saas hotspot masquerade"},
+            {"chain": "srcnat", "src-address": "172.31.0.0/16", "action": "masquerade", "comment": "billing-saas hotspot masquerade"},
+        )
         _isolate_customer_bridge_from_router_management(api, managed_bridge)
 
         # Add the target interface to our managed bridge
@@ -1300,6 +1312,8 @@ def _build_port_command_script(interface_name, service_type, profile_name, porta
             f':do {{ /ip firewall filter add chain=input action=accept in-interface="{_rsc_escape(bridge_name)}" protocol=tcp dst-port=80,443,64872-64875 place-before=[find comment="defconf: drop all not coming from LAN"] comment="billing-saas allow hotspot web-proxy" }} on-error={{ /ip firewall filter add chain=input action=accept in-interface="{_rsc_escape(bridge_name)}" protocol=tcp dst-port=80,443,64872-64875 comment="billing-saas allow hotspot web-proxy" }}; '
             f':do {{ /ip hotspot profile add name="Expressnet-profile" hotspot-address=172.31.0.1 dns-name=hot.spot login-by=cookie,http-pap,trial,mac-cookie use-radius=yes html-directory=Expressnet-hotspot radius-interim-update=10m comment="Expressnet captive portal: {portal_comment}" }} '
             f'on-error={{ /ip hotspot profile set [find name="Expressnet-profile"] hotspot-address=172.31.0.1 dns-name=hot.spot login-by=cookie,http-pap,trial,mac-cookie use-radius=yes html-directory=Expressnet-hotspot radius-interim-update=10m comment="Expressnet captive portal: {portal_comment}" }}; '
+            f':do {{ /ip firewall nat remove [find comment="billing-saas hotspot masquerade"] }} on-error={{}}; '
+            f':do {{ /ip firewall nat add chain=srcnat src-address=172.31.0.0/16 action=masquerade comment="billing-saas hotspot masquerade" }} on-error={{ :log warning "Billing SaaS: failed to add hotspot masquerade" }}; '
             + "".join(
                 f':do {{ /ip hotspot walled-garden add action=allow dst-host="{_rsc_escape(h)}" comment="billing-saas captive portal access" }} on-error={{ :log warning "Billing SaaS: walled-garden add failed" }}; '
                 for h in walled_garden_hosts(tenant, portal_host)

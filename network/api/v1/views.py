@@ -651,34 +651,46 @@ def _html_page(title, body, status=200):
   <title>{html.escape(title)}</title>
   <style>
     *{{box-sizing:border-box}}
-    body{{margin:0;font-family:Arial,sans-serif;background:#000;color:#fff;line-height:1.45;overflow-x:hidden}}
-    header{{width:min(100% - 24px,760px);margin:12px auto 0;background:var(--portal-accent,#2600d8);color:white;padding:16px 18px 24px;border-radius:10px 10px 22px 22px;text-align:center;box-shadow:0 18px 38px var(--portal-accent-shadow,rgba(38,0,216,.28))}}
-    header h1{{margin:8px 0 0;font-size:clamp(18px,5vw,22px);line-height:1.15;overflow-wrap:anywhere}}
-    header p{{margin:10px 0 0;color:rgba(255,255,255,.9);font-size:14px;font-weight:700}}
-    main{{width:100%;max-width:760px;margin:0 auto;padding:20px clamp(14px,4vw,22px) 28px}}
-    .hero-logo{{width:82px;height:58px;margin:0 auto;border-radius:10px;background:rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:24px;font-weight:800}}
+    body{{margin:0;font-family:"Inter","Segoe UI",Roboto,Arial,sans-serif;background:radial-gradient(circle at 50% -10%,#152233 0,#06101a 46%,#02080e 100%);color:#fff;line-height:1.25;overflow-x:hidden;font-weight:400;letter-spacing:0}}
+    header{{position:relative;overflow:hidden;width:min(100% - 24px,760px);margin:8px auto 0;background:linear-gradient(135deg,#ff7800 0%,#ff8a00 48%,#ff7000 100%);color:white;padding:16px 18px 18px;border-radius:8px;text-align:center;box-shadow:0 16px 34px rgba(255,120,0,.20)}}
+    header:before{{content:"";position:absolute;left:-6%;right:-6%;bottom:-44px;height:104px;background:radial-gradient(ellipse at 20% 10%,rgba(255,224,120,.20),transparent 55%);transform:rotate(8deg);pointer-events:none}}
+    header:after{{content:"";position:absolute;right:-20px;top:16px;width:154px;height:154px;border-radius:50%;background:repeating-radial-gradient(circle at 50% 50%,transparent 0 20px,rgba(255,184,62,.24) 22px 34px,transparent 36px 52px);opacity:.65;pointer-events:none}}
+    header h1{{position:relative;margin:4px 0 0;font-size:clamp(23px,6vw,30px);font-weight:700;line-height:.98;overflow-wrap:anywhere;text-transform:uppercase}}
+    header .brand-sub{{position:relative;margin:0;color:#fff;font-size:clamp(13px,3.3vw,16px);font-weight:700;letter-spacing:.04em;text-transform:uppercase}}
+    main{{width:100%;max-width:760px;margin:0 auto;padding:12px clamp(12px,3vw,16px) 30px}}
+    .hero-logo{{position:relative;width:52px;height:38px;margin:0 auto 2px;border-radius:9px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.32);display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:0;font-weight:600}}
+    .hero-logo:before{{content:"";width:24px;height:18px;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 24'%3E%3Cpath d='M4 9a18 18 0 0 1 24 0' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M9 14a10 10 0 0 1 14 0' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M14 19a3 3 0 0 1 4 0' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E")}}
+    .hero-logo.has-logo:before{{display:none}}
     .hero-logo img{{width:100%;height:100%;object-fit:cover;display:block}}
     .steps{{display:flex;align-items:center;justify-content:center;gap:9px;margin-top:12px;font-size:16px;font-weight:800}}
     .chev{{opacity:.75}}
-    .call{{display:inline-flex;align-items:center;gap:9px;margin-top:16px;min-height:44px;border-radius:7px;background:rgba(0,0,0,.28);padding:10px 22px;color:#fff;text-decoration:none;font-size:17px;font-weight:800;letter-spacing:.02em}}
-    .card{{background:#242424;border:1px solid rgba(255,255,255,.11);border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 10px 26px rgba(0,0,0,.35);min-width:0}}
-    .card strong{{font-size:15px;color:#fff;font-weight:700}}
+    .call{{position:relative;display:inline-flex;align-items:center;gap:7px;margin-top:9px;min-height:27px;border-radius:5px;background:rgba(111,51,0,.76);padding:6px 15px;color:#fff;text-decoration:none;font-size:12px;font-weight:700;letter-spacing:0;box-shadow:0 8px 16px rgba(111,51,0,.24)}}
+    .call:before{{content:"";width:13px;height:13px;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M6.6 10.8c1.5 3 3.6 5.1 6.6 6.6l2.2-2.2c.3-.3.8-.4 1.2-.3 1.3.4 2.6.6 4 .6.7 0 1.2.5 1.2 1.2v3.5c0 .7-.5 1.2-1.2 1.2C10.5 21.4 2.6 13.5 2.6 3.4c0-.7.5-1.2 1.2-1.2h3.5c.7 0 1.2.5 1.2 1.2 0 1.4.2 2.7.6 4 .1.4 0 .8-.3 1.2l-2.2 2.2z'/%3E%3C/svg%3E")}}
+    .card{{background:linear-gradient(120deg,rgba(23,35,48,.96),rgba(12,23,34,.96));border:1px solid rgba(158,177,198,.14);border-radius:8px;padding:12px;margin:8px 0;box-shadow:0 10px 24px rgba(0,0,0,.28);min-width:0}}
+    .card strong{{font-size:15px;color:#fff;font-weight:650}}
     .quick{{display:grid;gap:10px}}
     .quick form{{display:grid;grid-template-columns:1fr;gap:8px}}
-    .pkg{{display:flex;gap:14px;align-items:center;justify-content:space-between;min-height:88px;padding:17px 20px}}
+    .pkg{{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:12px;align-items:center;min-height:64px;padding:9px 9px 9px 10px}}
     .pkg > *{{min-width:0}}
+    .pkg-icon{{width:41px;height:41px;border-radius:8px;background:linear-gradient(135deg,#ff9300,#ff7800);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 16px rgba(255,120,0,.20)}}
+    .pkg-icon:before{{content:"";width:25px;height:20px;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 24'%3E%3Cpath d='M4 9a18 18 0 0 1 24 0' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M9 14a10 10 0 0 1 14 0' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M14 19a3 3 0 0 1 4 0' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E")}}
+    .pkg-info{{border-left:1px solid rgba(185,204,224,.25);padding-left:12px}}
     .pkg-actions{{display:flex;flex-direction:column;gap:8px;align-items:stretch;flex-shrink:0}}
-    .pkg-title{{font-size:16px;font-weight:750;text-transform:uppercase;line-height:1.22;overflow-wrap:anywhere}}
-    .pkg-meta{{margin-top:5px;font-size:14px;color:#cbd5e1}}
+    .pkg-title{{font-size:13px;font-weight:700;text-transform:uppercase;line-height:1.08;overflow-wrap:anywhere}}
+    .pkg-meta{{margin-top:4px;font-size:12px;color:#b7c7d8;font-weight:400}}
+    .pkg-speed{{margin-top:2px;display:flex;align-items:center;gap:6px;color:#c7d8e8;font-size:11px;font-weight:400}}
+    .pkg-speed:before{{content:"";width:14px;height:12px;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 18'%3E%3Cpath d='M4 14a8 8 0 1 1 16 0' fill='none' stroke='%239cc9e8' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M12 14l4-6' stroke='%239cc9e8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")}}
     form{{width:100%}}
     input,select,button,.buy-btn,.close-link{{width:100%;min-height:42px;font:inherit;border-radius:7px;border:1px solid rgba(255,255,255,.12);padding:10px 12px;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}}
     input,select{{background:#000;color:#fff;outline:none}}
     input::placeholder{{color:#8b93a1}}
     input:focus{{border-color:var(--portal-accent,#2600d8)}}
-    button,.buy-btn{{background:var(--portal-accent,#2600d8);color:var(--portal-accent-contrast,#fff);border-color:var(--portal-accent,#2600d8);font-weight:700;cursor:pointer;box-shadow:0 12px 22px rgba(0,0,0,.45)}}
-    .secondary,.close-link{{background:transparent;border-color:var(--portal-accent,#2600d8);color:#fff;box-shadow:none}}
-    .muted{{color:#cbd5e1;font-size:13px}} .price{{font-weight:800;color:#fff}}
-    .section-title{{margin:22px 0 12px;font-size:20px;font-weight:750;color:#fff}}
+    button,.buy-btn{{background:linear-gradient(135deg,#ff9400,#ff7800);color:#fff;border-color:#ff8700;font-weight:700;cursor:pointer;box-shadow:0 8px 18px rgba(255,120,0,.22)}}
+    .secondary,.close-link{{background:transparent;border-color:#ff8700;color:#fff;box-shadow:none}}
+    .muted{{color:#b7c7d8;font-size:12px}} .price{{font-weight:700;color:#fff}}
+    .section-title{{position:relative;display:flex;align-items:center;gap:10px;margin:14px 0 9px;font-size:19px;font-weight:650;color:#fff}}
+    .section-title:before{{content:"";width:22px;height:22px;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2l9 5-9 5-9-5 9-5z' fill='%23ff9800'/%3E%3Cpath d='M3 9l9 5 9-5v8l-9 5-9-5V9z' fill='%23f59e0b'/%3E%3Cpath d='M12 14v8' stroke='%230b1220' stroke-opacity='.25'/%3E%3C/svg%3E")}}
+    .section-title:after{{content:"";height:1px;background:#ff8700;flex:1;margin-left:18px;max-width:96px}}
     .alert{{background:#2b1806;border:1px solid #9a5b16;color:#fed7aa;border-radius:8px;padding:12px;margin:12px 0}}
     .connect-card{{text-align:center}}
     .spinner{{width:48px;height:48px;margin:0 auto 14px;border:4px solid rgba(255,255,255,.16);border-top-color:var(--portal-accent,#2600d8);border-radius:999px;animation:spin .8s linear infinite}}
@@ -687,7 +699,8 @@ def _html_page(title, body, status=200):
     .access-row span{{color:#cbd5e1;font-size:12px;font-weight:700}}
     .access-row strong{{overflow-wrap:anywhere;text-align:right;font-size:13px}}
     @keyframes spin{{to{{transform:rotate(360deg)}}}}
-    .buy-btn{{width:auto;min-width:84px;padding-left:22px;padding-right:22px}}
+    .buy-btn{{width:auto;min-width:67px;min-height:28px;padding:7px 11px;border-radius:6px;font-size:12px}}
+    .buy-btn:before{{content:"";width:14px;height:14px;margin-right:5px;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M7 18c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM7.2 14.8h7.5c.8 0 1.5-.4 1.9-1.1L21 6H6.2L5.6 3H2v2h2l3.1 10.2c.1.4.5.6.9.6z'/%3E%3C/svg%3E")}}
     .pay-modal{{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.72);padding:18px;z-index:20}}
     .pay-modal:target{{display:flex}}
     .pay-box{{width:min(100%,420px);background:#242424;border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:18px;box-shadow:0 24px 60px rgba(0,0,0,.6)}}
@@ -696,8 +709,8 @@ def _html_page(title, body, status=200):
     .pay-head p{{margin:4px 0 0;color:#cbd5e1;font-size:13px}}
     .close-btn{{width:38px;min-width:38px;min-height:38px;padding:0;background:transparent;border:1px solid rgba(255,255,255,.16);box-shadow:none;font-size:22px;line-height:1;color:#fff;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;border-radius:7px}}
     .modal-actions{{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}}
-    @media(min-width:600px){{.quick form.row{{grid-template-columns:1fr auto}} .quick form.credentials{{grid-template-columns:1fr 1fr auto}} .quick button{{width:auto;min-width:118px}}}}
-    @media(max-width:520px){{header{{width:100%;margin-top:0;border-radius:0 0 18px 18px}}main{{padding-left:14px;padding-right:14px}}.pkg{{align-items:stretch;flex-direction:column;padding:16px;gap:10px}}.pkg-actions{{width:100%}}.pkg-title{{font-size:15px}}.pkg-meta{{font-size:13px}}.buy-btn{{width:100%;min-width:72px;padding-left:16px;padding-right:16px}}.modal-actions{{grid-template-columns:1fr}}}}
+    @media(min-width:600px){{header{{width:min(100% - 20px,590px);padding-top:14px;padding-bottom:13px}}main{{max-width:590px;padding-top:10px}}.quick form.row{{grid-template-columns:1fr auto}} .quick form.credentials{{grid-template-columns:1fr 1fr auto}} .quick button{{width:auto;min-width:118px}}.pkg{{min-height:58px;padding:8px 9px 8px 12px;grid-template-columns:54px minmax(0,1fr) auto}}.pkg-icon{{width:39px;height:39px}}.pkg-title{{font-size:12px}}.pkg-meta{{font-size:11px}}.pkg-speed{{font-size:10px}}}}
+    @media(max-width:520px){{header{{width:calc(100% - 22px);margin-top:2px;border-radius:0 0 14px 14px;padding-top:20px;padding-bottom:12px}}main{{padding-left:18px;padding-right:18px}}.modal-actions{{grid-template-columns:1fr}}}}
   </style>
 </head>
 <body>{body}</body>
@@ -1082,10 +1095,11 @@ def captive_portal_page(request, tenant_id):
         package_html_v2 = "".join(
             f"""
             <div class="card pkg">
-              <div>
+              <div class="pkg-icon" aria-hidden="true"></div>
+              <div class="pkg-info">
                 <div class="pkg-title">{html.escape(str(pkg.get('name') or 'Package'))}</div>
                 <div class="pkg-meta"><span class="price">Ksh {html.escape(str(pkg.get('amount_payable') or pkg.get('price') or 0))}</span> for {html.escape(str(pkg.get('duration_label') or ''))}</div>
-                {f"<div class='muted'>{html.escape(str(pkg.get('speed') or ''))}</div>" if pkg.get('speed') else ""}
+                {f"<div class='pkg-speed'>{html.escape(str(pkg.get('speed') or ''))}</div>" if pkg.get('speed') else ""}
               </div>
               <div class="pkg-actions">
                 <a class="buy-btn" href="#pay-{html.escape(str(pkg.get('id')), quote=True)}">Buy</a>
@@ -1179,14 +1193,16 @@ def captive_portal_page(request, tenant_id):
     """    
     logo_url = html.escape(str(tenant.get("logo_url") or ""), quote=True)
     phone_value = html.escape(str(tenant.get("phone") or tenant.get("support_phone") or "0797443584"), quote=True)
-    logo_html = f"<img src='{logo_url}' alt=''>" if logo_url else "WiFi"
+    logo_html = f"<img src='{logo_url}' alt=''>" if logo_url else ""
+    hero_logo_class = "hero-logo has-logo" if logo_url else "hero-logo"
+    brand_name = html.escape(str(tenant.get('business_name') or 'CITYNET'))
     theme_vars = html.escape(_portal_theme_vars(tenant), quote=True)
     body_html_v3 = f"""
       <div style="{theme_vars}">
       <header>
-        <div class="hero-logo">{logo_html}</div>
-        <h1>{html.escape(str(tenant.get('business_name') or 'Internet packages'))}</h1>
-        
+        <div class="{hero_logo_class}">{logo_html}</div>
+        <h1>WiFi</h1>
+        <p class="brand-sub">{brand_name}</p>
         <a class="call" href="tel:{phone_value}">Call {phone_value}</a>
       </header>
       <main>

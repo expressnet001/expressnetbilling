@@ -2368,7 +2368,13 @@ def request_payment_change_code(request):
             channels.append("email")
     if not channels:
         ref(f"tenants/{tenant['id']}/payment_change_challenge").delete()
-        return ok({"message": "The confirmation code could not be delivered. Check the tenant notification settings."}, 503)
+        return ok(
+            {
+                "success": True,
+                "password_fallback": True,
+                "message": "The confirmation code could not be delivered. Enter your account password to confirm this change.",
+            }
+        )
     return ok({"success": True, "challenge_id": challenge_id, "expires_in": 600, "channels": sorted(set(channels))})
 
 
@@ -2415,21 +2421,25 @@ def settings_business(request):
         challenge = ref(f"tenants/{tenant_id}/payment_change_challenge").get() or {}
         challenge_id = str(data.get("payment_change_id") or "").strip()
         challenge_code = str(data.get("payment_change_code") or "").strip()
+        current_password = str(data.get("current_password") or "")
         expires_at = parse_datetime(str(challenge.get("expires_at") or ""))
-        if (
-            not challenge_id
-            or challenge_id != challenge.get("id")
-            or challenge.get("used")
-            or not expires_at
-            or expires_at <= timezone.now()
-            or int(challenge.get("attempts") or 0) >= 5
-            or not check_password(challenge_code, challenge.get("code_hash"))
-        ):
+        password_confirmed = bool(current_password and check_password(current_password, request.tenant.get("password")))
+        challenge_confirmed = bool(
+            challenge_id
+            and challenge_id == challenge.get("id")
+            and not challenge.get("used")
+            and expires_at
+            and expires_at > timezone.now()
+            and int(challenge.get("attempts") or 0) < 5
+            and check_password(challenge_code, challenge.get("code_hash"))
+        )
+        if not challenge_confirmed and not password_confirmed:
             attempts = int(challenge.get("attempts") or 0) + 1 if challenge else 0
             if challenge:
                 ref(f"tenants/{tenant_id}/payment_change_challenge").update({"attempts": attempts})
-            return ok({"message": "A valid payment settings confirmation code is required."}, 403)
-        ref(f"tenants/{tenant_id}/payment_change_challenge").update({"used": True, "used_at": iso_now()})
+            return ok({"message": "A valid confirmation code or account password is required to change payment settings."}, 403)
+        if challenge_confirmed:
+            ref(f"tenants/{tenant_id}/payment_change_challenge").update({"used": True, "used_at": iso_now()})
     for field in allowed:
         if field in data:
             if field == "dark_mode":

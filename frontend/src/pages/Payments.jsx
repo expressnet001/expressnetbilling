@@ -127,12 +127,17 @@ export default function Payments() {
     setSavingMethods(true);
     try {
       const { data: challenge } = await api.post('/settings/payment-change/request');
-      const code = window.prompt('Enter the confirmation code sent to the tenant phone or email:');
-      if (!code?.trim()) {
+      const usesPasswordFallback = Boolean(challenge.password_fallback);
+      const confirmation = window.prompt(
+        usesPasswordFallback
+          ? 'Confirmation code could not be delivered. Enter your account password to confirm this change:'
+          : 'Enter the confirmation code sent to the tenant phone or email:',
+      );
+      if (!confirmation?.trim()) {
         toast.error('Payment settings were not changed because confirmation was cancelled.');
         return;
       }
-      const { data } = await api.patch('/settings/business', {
+      const payload = {
         payment_methods: paymentSettings.methods.map(onlineMethod),
         business_number: paymentSettings.businessNumber,
         payout_phone: paymentSettings.payoutPhone,
@@ -147,9 +152,14 @@ export default function Payments() {
         daraja_environment: paymentSettings.environment,
         daraja_shortcode_type: onlineMethod(selectedMethod) === 'daraja_buygoods' ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline',
         payment_provider: 'mpesa',
-        payment_change_id: challenge.challenge_id,
-        payment_change_code: code.trim(),
-      });
+      };
+      if (usesPasswordFallback) {
+        payload.current_password = confirmation.trim();
+      } else {
+        payload.payment_change_id = challenge.challenge_id;
+        payload.payment_change_code = confirmation.trim();
+      }
+      const { data } = await api.patch('/settings/business', payload);
       setSettlementStatus(data.config?.settlement_status || 'ready');
       toast.success('Payment settings saved');
       setMethodsOpen(false);
