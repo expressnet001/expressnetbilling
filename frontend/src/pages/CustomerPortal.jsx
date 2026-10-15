@@ -90,7 +90,6 @@ export default function CustomerPortal() {
   const [tenant, setTenant] = useState(null);
   const [packages, setPackages] = useState([]);
   const [phone, setPhone] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
   const [serviceType, setServiceType] = useState(pathServiceType() || 'hotspot');
   const [pppoeUsername, setPppoeUsername] = useState('');
   const [macAddress, setMacAddress] = useState('');
@@ -309,7 +308,7 @@ export default function CustomerPortal() {
         link_login: routerContext.linkLogin,
         dst: routerContext.dst,
         provider: paymentMethod === 'paystack' ? 'paystack' : undefined,
-        email: customerEmail,
+        paystack_method: paymentMethod === 'paystack' ? 'mpesa_stk' : undefined,
         payment_method: paymentMethod === 'paystack' ? undefined : paymentMethod,
       });
       if (data.authorizationUrl) {
@@ -318,7 +317,7 @@ export default function CustomerPortal() {
       }
       toast.success(data.message || 'Check your phone for the payment prompt');
       if (data.paymentId) {
-        setVerification({ success: false, status: 'pending', message: 'Waiting for M-Pesa confirmation.' });
+        setVerification({ success: false, status: 'pending', message: paymentMethod === 'paystack' ? 'Waiting for Paystack M-Pesa confirmation.' : 'Waiting for M-Pesa confirmation.' });
         setPendingPayment({ id: data.paymentId, verifyToken: data.verifyToken || '' });
       }
       setSelectedPackage(null);
@@ -630,16 +629,12 @@ export default function CustomerPortal() {
                   placeholder="2547XXXXXXXX"
                   value={phone}
                   onChange={(event) => setPhone(event.target.value)}
+                  required
                 />
               </div>
-              {paymentMethod === 'paystack' && (
-                <label className="form-label mt-4 block" htmlFor="customerEmail">Email for Paystack receipt
-                  <input id="customerEmail" type="email" className="form-input mt-1" placeholder="you@example.com" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} required />
-                </label>
-              )}
               <button type="button" className="btn-primary mt-5 w-full" onClick={pay} disabled={paying}>
                 <CreditCard size={18} />
-        {paying ? (paymentMethod === 'paystack' ? 'Opening Paystack...' : 'Sending STK push...') : (paymentMethod === 'paystack' ? 'Pay with Paystack' : 'Send M-Pesa Prompt')}
+        {paying ? 'Sending STK push...' : (paymentMethod === 'paystack' ? 'Pay with Paystack M-Pesa STK' : 'Send M-Pesa Prompt')}
               </button>
             </div>
           </section>

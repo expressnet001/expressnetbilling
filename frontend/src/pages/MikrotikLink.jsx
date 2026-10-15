@@ -60,6 +60,11 @@ export default function MikrotikSettings() {
     if (selectedServices.includes('pppoe') && selectedServices.includes('hotspot')) return 'both';
     return selectedServices[0] || '';
   }, [selectedServices]);
+  const selectablePorts = (routerStatus?.interfaces || [])
+    .filter((item) => item.customer_assignable !== false)
+    .map((item) => item.name);
+  const allSelectablePortsSelected = selectablePorts.length > 0
+    && selectablePorts.every((portName) => selectedPorts.includes(portName));
 
   const pullRouterStatus = async (options = {}) => {
     setPullingStatus(true);
@@ -195,6 +200,14 @@ export default function MikrotikSettings() {
     });
   };
 
+  const toggleAllPorts = () => {
+    setSelectedPorts((current) => (
+      allSelectablePortsSelected
+        ? current.filter((portName) => !selectablePorts.includes(portName))
+        : [...new Set([...current, ...selectablePorts])]
+    ));
+  };
+
   const assignPorts = async () => {
     if (!selectedService) {
       toast.error('Select PPPoE, Hotspot, or both');
@@ -205,21 +218,30 @@ export default function MikrotikSettings() {
       return;
     }
     setAssigning(true);
-    try {
-      const profile = selectedService === 'hotspot' ? 'billing-saas-captive' : 'default';
-      await Promise.all(selectedPorts.map((portName) => api.post('/router/ports', {
-        interface: portName,
-        service_type: selectedService,
-        profile,
-      })));
-      toast.success(`${selectedPorts.length} port${selectedPorts.length === 1 ? '' : 's'} queued for ${serviceLabel(selectedService)}`);
-      setSelectedPorts([]);
-      await pullRouterStatus();
-    } catch (error) {
-      toast.error(error.response?.data?.message || 'Failed to assign port');
-    } finally {
-      setAssigning(false);
+    const profile = selectedService === 'hotspot' ? 'billing-saas-captive' : 'default';
+    const failedPorts = [];
+    let assignedCount = 0;
+    for (const portName of selectedPorts) {
+      try {
+        await api.post('/router/ports', {
+          interface: portName,
+          service_type: selectedService,
+          profile,
+        });
+        assignedCount += 1;
+      } catch {
+        failedPorts.push(portName);
+      }
     }
+    setSelectedPorts(failedPorts);
+    if (assignedCount > 0) {
+      toast.success(`${assignedCount} port${assignedCount === 1 ? '' : 's'} queued for ${serviceLabel(selectedService)}`);
+      await pullRouterStatus({ silent: true });
+    }
+    if (failedPorts.length > 0) {
+      toast.error(`Could not assign ${failedPorts.map(portLabel).join(', ')}. They remain selected so you can retry.`);
+    }
+    setAssigning(false);
   };
 
   if (loading) return <p className="text-sm font-medium text-slate-600">Loading MikroTik configuration...</p>;
@@ -399,7 +421,13 @@ export default function MikrotikSettings() {
                 })}
               </div>
 
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              <div className="mt-6 flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-700">Select one or more customer ports</p>
+                <button type="button" className="btn-secondary" onClick={toggleAllPorts} disabled={selectablePorts.length === 0}>
+                  {allSelectablePortsSelected ? 'Clear selection' : 'Select all'}
+                </button>
+              </div>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
                 {(routerStatus.interfaces || []).map((item) => {
                   const selected = selectedPorts.includes(item.name);
                   const assigned = routerStatus.assignments?.[item.name];
