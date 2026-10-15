@@ -851,7 +851,7 @@ def _limited_router_status_payload(snapshot, assignments=None, source="provision
         item["customer_assignable"] = name != wan_interface and name.lower() != "ether1"
         if not item["customer_assignable"]:
             item["assignment_warning"] = "WAN/uplink port"
-    payload["interfaces"] = interfaces[:6]
+    payload["interfaces"] = interfaces
     payload["assignments"] = assignments or {}
     payload["source"] = source
     payload["message"] = message

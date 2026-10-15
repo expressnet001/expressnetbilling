@@ -39,7 +39,17 @@ def _is_admin_host(request):
     host = _host_without_port(request)
     admin_subdomain = str(getattr(settings, "ADMIN_SUBDOMAIN", "admin")).strip(".").lower()
     base_domain = str(getattr(settings, "PUBLIC_BASE_DOMAIN", "")).strip(".").lower()
-    return host == admin_subdomain or host == f"{admin_subdomain}.{base_domain}" or host.startswith(f"{admin_subdomain}.")
+    explicitly_allowed_hosts = {
+        str(item).strip().strip(".").lower()
+        for item in getattr(settings, "ADMIN_API_ALLOWED_HOSTS", [])
+        if str(item).strip()
+    }
+    return (
+        host in explicitly_allowed_hosts
+        or host == admin_subdomain
+        or host == f"{admin_subdomain}.{base_domain}"
+        or host.startswith(f"{admin_subdomain}.")
+    )
 
 
 def _client_ip(request):

@@ -72,6 +72,41 @@ def initiate_paystack_checkout(*, email, amount, reference, callback_url, curren
     return result["data"]
 
 
+def initiate_paystack_mpesa_stk(*, email, amount, phone, reference, currency="KES", subaccount=None, bearer="account", metadata=None):
+    """Start a Paystack M-Pesa mobile money charge (customer authorizes by STK PIN)."""
+    secret = paystack_secret_key()
+    if not secret:
+        raise PaymentProviderError("Paystack checkout is not configured yet. Please contact support.", "Missing PAYSTACK_SECRET_KEY", 503)
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if digits.startswith("0"):
+        digits = "254" + digits[1:]
+    if not digits.startswith("254"):
+        digits = "254" + digits
+    mobile = f"+{digits}"
+    minor_units = int((Decimal(str(amount)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    payload = {
+        "email": email,
+        "amount": str(minor_units),
+        "currency": currency or "KES",
+        "reference": reference,
+        "mobile_money": {"phone": mobile, "provider": "mpesa"},
+        "metadata": metadata or {},
+    }
+    if subaccount:
+        payload["subaccount"] = subaccount
+        payload["bearer"] = "subaccount" if bearer == "subaccount" else "account"
+        charge_percent = tenant_paystack_platform_fee_percent()
+        if charge_percent:
+            payload["transaction_charge"] = int((Decimal(str(amount)) * Decimal("100") * Decimal(str(charge_percent)) / Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    response = requests.post(f"{PAYSTACK_API_BASE}/charge", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json=payload, timeout=30)
+    response.raise_for_status()
+    result = response.json()
+    charge = result.get("data") or {}
+    if result.get("status") is not True or not charge.get("reference"):
+        raise PaymentProviderError(result.get("message") or "Paystack could not start the M-Pesa prompt", json.dumps(result), 502)
+    return charge
+
+
 def create_paystack_subaccount(*, tenant, percentage_charge=0):
     """Create a Paystack subaccount linked to the tenant's configured bank."""
     secret = paystack_secret_key()

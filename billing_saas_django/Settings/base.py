@@ -33,6 +33,7 @@ def unique_apps(apps):
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY") or "dev-only-change-me"
 API_BASE_PATH = env_path("API_BASE_PATH", "api")
 ADMIN_API_PATH = env_path("ADMIN_API_PATH", "admin")
+ADMIN_API_ALLOWED_HOSTS = env_list("ADMIN_API_ALLOWED_HOSTS")
 ADMIN_FRONTEND_PATH = env_path("ADMIN_FRONTEND_PATH", "admin")
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "")
 PAYSTACK_CURRENCY = os.getenv("PAYSTACK_CURRENCY", "KES")

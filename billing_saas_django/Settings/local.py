@@ -32,8 +32,8 @@ if RAILWAY_TCP_PROXY_DOMAIN and RAILWAY_TCP_PROXY_PORT:
         or "railway"
     )
     RAILWAY_PUBLIC_DATABASE_URL = (
-        f"postgresql://{quote(railway_user)}:{quote(railway_password)}@"
-        f"{RAILWAY_TCP_PROXY_DOMAIN}:{RAILWAY_TCP_PROXY_PORT}/{quote(railway_database)}"
+        f"postgresql://{quote(railway_user, safe='')}:{quote(railway_password, safe='')}@"
+        f"{RAILWAY_TCP_PROXY_DOMAIN}:{RAILWAY_TCP_PROXY_PORT}/{quote(railway_database, safe='')}"
     )
 else:
     RAILWAY_PUBLIC_DATABASE_URL = None
@@ -74,6 +74,14 @@ configured_database_url = (
 
 if not configured_database_url:
     raise RuntimeError("PostgreSQL DATABASE_URL is required. SQLite fallback is disabled for this project.")
+
+if "${{" in configured_database_url or "}}" in configured_database_url:
+    raise RuntimeError(
+        "DATABASE_URL contains Railway's unresolved ${{...}} variable references. Those references are "
+        "expanded by Railway only. For local use, set PGUSER, PGPASSWORD, PGDATABASE, "
+        "RAILWAY_TCP_PROXY_DOMAIN, and RAILWAY_TCP_PROXY_PORT to their actual values, or set "
+        "DATABASE_PUBLIC_URL to a fully resolved URL."
+    )
 
 if PRIVATE_RAILWAY_HOST in configured_database_url and not RAILWAY_PUBLIC_DATABASE_URL:
     raise RuntimeError(

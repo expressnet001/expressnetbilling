@@ -43,6 +43,7 @@ from billing_api.services import (
     selected_daraja_method,
     initiate_daraja_payment,
     initiate_paystack_checkout,
+    initiate_paystack_mpesa_stk,
     create_paystack_subaccount,
     verify_paystack_transaction,
     paystack_signature_valid,
@@ -733,8 +734,13 @@ def _public_pay_impl(request, tenant_id):
     data = body(request)
     if not data.get("package_id") or not data.get("phone"):
         return ok({"message": "Package and phone number are required"}, 400)
-    if str(data.get("provider") or "").lower() == "paystack" and not str(data.get("email") or "").strip():
-        return ok({"message": "Email address is required for Paystack checkout"}, 400)
+    paystack_method = str(data.get("paystack_method") or "mpesa_stk").lower()
+    if (
+        str(data.get("provider") or "").lower() == "paystack"
+        and paystack_method not in {"mpesa", "mpesa_stk", "stk"}
+        and not str(data.get("email") or "").strip()
+    ):
+        return ok({"message": "Email address is required for Paystack hosted checkout"}, 400)
     tenant_data = ref(f"tenants/{tenant_id}").get()
     if not tenant_data:
         return ok({"message": "Tenant not found"}, 404)
@@ -895,15 +901,29 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
         "paystack_reference": reference,
     })
     try:
-        email = str(data.get("email") or (customer or {}).get("email") or tenant.get("payment_customer_email") or "").strip()
+        paystack_method = str(data.get("paystack_method") or "mpesa_stk").lower()
+        email = str(data.get("email") or (customer or {}).get("email") or tenant.get("payment_customer_email") or tenant.get("support_email") or tenant.get("email") or "").strip()
+        is_mpesa_stk = paystack_method in {"mpesa", "mpesa_stk", "stk"}
+        if is_mpesa_stk and not email:
+            # Paystack's Charge API requires an email field, although an M-Pesa
+            # STK customer should only have to provide their phone number.
+            email_hash = hashlib.sha256(reference.encode("utf-8")).hexdigest()[:20]
+            email = f"checkout-{email_hash}@payments.invalid"
         if not email or "@" not in email:
-            raise PaymentProviderError("A valid email address is required for Paystack checkout.", "No valid customer email", 400)
+            raise PaymentProviderError("A valid email address is required for Paystack hosted checkout.", "No valid customer email", 400)
         subaccount = str(tenant.get("paystack_subaccount_code") or "").strip()
         if not subaccount or tenant.get("paystack_settlement_status") != "ready":
             raise PaymentProviderError("This tenant has no verified Paystack bank settlement account. Save the bank code and account number in Payment methods first.", "Missing Paystack subaccount", 400)
         if not tenant.get("bank_code") or not tenant.get("bank_account_number"):
             raise PaymentProviderError("The tenant bank details are missing. Paystack checkout is blocked until settlement details are saved.", "Missing tenant settlement bank details", 400)
-        checkout = initiate_paystack_checkout(email=email, amount=amount_payable, reference=reference, callback_url=callback_url, currency=currency, subaccount=subaccount or None, bearer=tenant.get("paystack_bearer") or "account", metadata={"kind": "internet_payment", "tenant_id": str(tenant_id), "payment_id": str(payment_ref.key)})
+        metadata = {"kind": "internet_payment", "tenant_id": str(tenant_id), "payment_id": str(payment_ref.key)}
+        if is_mpesa_stk:
+            charge = initiate_paystack_mpesa_stk(email=email, amount=amount_payable, phone=phone, reference=reference, currency=currency, subaccount=subaccount, bearer=tenant.get("paystack_bearer") or "account", metadata=metadata)
+            payment_ref.update({"paystack_reference": charge.get("reference") or reference, "paystack_charge_status": charge.get("status") or "", "paystack_display_text": charge.get("display_text") or "", "collection_account": "tenant_paystack", "tenant_settlement_status": "paystack_subaccount", "tenant_paystack_subaccount_code": subaccount, "payment_method": "paystack_mpesa_stk", "customer_message": charge.get("display_text") or "Approve the M-Pesa prompt on your phone to complete payment."})
+            access_token = make_payment_access_token(tenant_id, payment_ref.key)
+            payment_ref.update({"access_verify_token": access_token})
+            return ok({"success": True, "message": charge.get("display_text") or "Approve the Paystack M-Pesa STK prompt on your phone.", "paymentId": payment_ref.key, "verifyToken": access_token, "provider": "paystack", "paymentMethod": "mpesa_stk", "reference": charge.get("reference") or reference}, 201)
+        checkout = initiate_paystack_checkout(email=email, amount=amount_payable, reference=reference, callback_url=callback_url, currency=currency, subaccount=subaccount or None, bearer=tenant.get("paystack_bearer") or "account", metadata=metadata)
         payment_ref.update({"paystack_access_code": checkout.get("access_code"), "paystack_authorization_url": checkout.get("authorization_url"), "collection_account": "tenant_paystack", "tenant_settlement_status": "paystack_subaccount", "tenant_paystack_subaccount_code": subaccount})
         access_token = make_payment_access_token(tenant_id, payment_ref.key)
         payment_ref.update({"access_verify_token": access_token})
