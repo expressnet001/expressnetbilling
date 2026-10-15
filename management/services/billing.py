@@ -45,6 +45,13 @@ def paystack_secret_key():
     return str(platform_settings.get("paystack_secret_key") or "").strip()
 
 
+def tenant_paystack_platform_fee_percent():
+    try:
+        return max(0.0, min(100.0, float(os.getenv("PAYSTACK_PLATFORM_FEE_PERCENT", "0") or 0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def initiate_paystack_checkout(*, email, amount, reference, callback_url, currency="KES", subaccount=None, bearer="account", metadata=None):
     secret = paystack_secret_key()
     if not secret:
@@ -54,11 +61,42 @@ def initiate_paystack_checkout(*, email, amount, reference, callback_url, curren
     if subaccount:
         payload["subaccount"] = subaccount
         payload["bearer"] = "subaccount" if bearer == "subaccount" else "account"
+        charge_percent = tenant_paystack_platform_fee_percent()
+        if charge_percent:
+            payload["transaction_charge"] = int((Decimal(str(amount)) * Decimal("100") * Decimal(str(charge_percent)) / Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
     response = requests.post(f"{PAYSTACK_API_BASE}/transaction/initialize", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json=payload, timeout=30)
     response.raise_for_status()
     result = response.json()
     if result.get("status") is not True or not result.get("data", {}).get("authorization_url"):
         raise PaymentProviderError(result.get("message") or "Paystack did not return a checkout URL", json.dumps(result), 502)
+    return result["data"]
+
+
+def create_paystack_subaccount(*, tenant, percentage_charge=0):
+    """Create a Paystack subaccount linked to the tenant's configured bank."""
+    secret = paystack_secret_key()
+    if not secret:
+        raise PaymentProviderError("Paystack is not configured yet. Please contact support.", "Missing Paystack secret key", 503)
+    bank_code = str(tenant.get("bank_code") or "").strip()
+    account_number = str(tenant.get("bank_account_number") or "").strip()
+    if not bank_code or not account_number:
+        raise PaymentProviderError("Add the tenant bank code and account number before enabling Paystack settlement.", "Missing tenant bank details", 400)
+    payload = {
+        "business_name": str(tenant.get("business_name") or tenant.get("email") or "Tenant").strip(),
+        "settlement_bank": bank_code,
+        "account_number": account_number,
+        "percentage_charge": float(percentage_charge),
+        "primary_contact_email": str(tenant.get("email") or "").strip(),
+        "primary_contact_name": str(tenant.get("owner_name") or tenant.get("business_name") or "").strip(),
+        "primary_contact_phone": str(tenant.get("phone") or "").strip(),
+        "metadata": {"tenant_id": str(tenant.get("id") or "")},
+    }
+    response = requests.post(f"{PAYSTACK_API_BASE}/subaccount", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json=payload, timeout=30)
+    response.raise_for_status()
+    result = response.json()
+    code = (result.get("data") or {}).get("subaccount_code")
+    if result.get("status") is not True or not code:
+        raise PaymentProviderError(result.get("message") or "Paystack did not create a settlement subaccount.", json.dumps(result), 502)
     return result["data"]
 
 

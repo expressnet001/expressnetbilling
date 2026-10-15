@@ -43,6 +43,7 @@ from billing_api.services import (
     selected_daraja_method,
     initiate_daraja_payment,
     initiate_paystack_checkout,
+    create_paystack_subaccount,
     verify_paystack_transaction,
     paystack_signature_valid,
     initiate_daraja_b2c,
@@ -121,9 +122,9 @@ PAYMENT_SETTING_FIELDS = {
     "payment_methods",
     "payment_provider",
     "payout_phone",
+    "bank_account_number",
     "bank_code",
     "bank_name",
-    "bank_account_number",
     "daraja_consumer_key",
     "daraja_consumer_secret",
     "daraja_shortcode",
@@ -131,7 +132,6 @@ PAYMENT_SETTING_FIELDS = {
     "daraja_till_number",
     "daraja_shortcode_type",
     "daraja_environment",
-    "paystack_subaccount_code",
     "paystack_bearer",
     "payment_customer_email",
 }
@@ -657,8 +657,9 @@ def tenant_theme_payload(tenant):
         "bank_name": tenant.get("bank_name") or "",
         "bank_account_number": tenant.get("bank_account_number") or "",
         "payment_methods": tenant.get("payment_methods") if isinstance(tenant.get("payment_methods"), list) else ["daraja_paybill"],
-        "paystack_subaccount_code": tenant.get("paystack_subaccount_code") or "",
         "paystack_bearer": tenant.get("paystack_bearer") or "account",
+        "paystack_settlement_status": tenant.get("paystack_settlement_status") or ("ready" if tenant.get("paystack_subaccount_code") else "not_configured"),
+        "paystack_settlement_account_name": tenant.get("paystack_settlement_account_name") or "",
         "daraja_consumer_key": tenant.get("daraja_consumer_key") or "",
         "daraja_consumer_secret": tenant.get("daraja_consumer_secret") or "",
         "daraja_shortcode": tenant.get("daraja_shortcode") or "",
@@ -666,7 +667,7 @@ def tenant_theme_payload(tenant):
         "daraja_till_number": tenant.get("daraja_till_number") or "",
         "daraja_shortcode_type": tenant.get("daraja_shortcode_type") or "CustomerPayBillOnline",
         "daraja_environment": tenant.get("daraja_environment") or "production",
-        "settlement_status": tenant.get("settlement_status") or ("ready" if tenant_payout_details(tenant).get("payout_phone") else "missing_payout_details"),
+        "settlement_status": tenant.get("paystack_settlement_status") or tenant.get("settlement_status") or ("ready" if tenant_payout_details(tenant).get("payout_phone") else "missing_payout_details"),
         "settlement_pending_amount": float(tenant.get("settlement_pending_amount") or 0),
     }
 
@@ -898,8 +899,12 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
         if not email or "@" not in email:
             raise PaymentProviderError("A valid email address is required for Paystack checkout.", "No valid customer email", 400)
         subaccount = str(tenant.get("paystack_subaccount_code") or "").strip()
+        if not subaccount or tenant.get("paystack_settlement_status") != "ready":
+            raise PaymentProviderError("This tenant has no verified Paystack bank settlement account. Save the bank code and account number in Payment methods first.", "Missing Paystack subaccount", 400)
+        if not tenant.get("bank_code") or not tenant.get("bank_account_number"):
+            raise PaymentProviderError("The tenant bank details are missing. Paystack checkout is blocked until settlement details are saved.", "Missing tenant settlement bank details", 400)
         checkout = initiate_paystack_checkout(email=email, amount=amount_payable, reference=reference, callback_url=callback_url, currency=currency, subaccount=subaccount or None, bearer=tenant.get("paystack_bearer") or "account", metadata={"kind": "internet_payment", "tenant_id": str(tenant_id), "payment_id": str(payment_ref.key)})
-        payment_ref.update({"paystack_access_code": checkout.get("access_code"), "paystack_authorization_url": checkout.get("authorization_url"), "collection_account": "tenant_paystack" if subaccount else "platform_paystack", "tenant_settlement_status": "not_required" if subaccount else "pending_payment"})
+        payment_ref.update({"paystack_access_code": checkout.get("access_code"), "paystack_authorization_url": checkout.get("authorization_url"), "collection_account": "tenant_paystack", "tenant_settlement_status": "paystack_subaccount", "tenant_paystack_subaccount_code": subaccount})
         access_token = make_payment_access_token(tenant_id, payment_ref.key)
         payment_ref.update({"access_verify_token": access_token})
         return ok({"success": True, "message": "Continue to Paystack to complete your payment.", "paymentId": payment_ref.key, "verifyToken": access_token, "provider": "paystack", "authorizationUrl": checkout.get("authorization_url"), "reference": reference}, 201)
@@ -2570,7 +2575,6 @@ def settings_business(request):
         "daraja_till_number",
         "daraja_shortcode_type",
         "daraja_environment",
-        "paystack_subaccount_code",
         "paystack_bearer",
         "payment_customer_email",
     ]
@@ -2631,6 +2635,27 @@ def settings_business(request):
                 updates[field] = "sandbox" if value == "sandbox" else "production"
             else:
                 updates[field] = str(data[field]).strip()
+    bank_details_changed = any(
+        field in updates and str(updates[field]).strip() != str(request.tenant.get(field) or "").strip()
+        for field in ("bank_code", "bank_account_number")
+    )
+    if bank_details_changed:
+        updates.pop("paystack_subaccount_code", None)
+        updates["paystack_settlement_status"] = "not_configured"
+        merged_for_paystack = {**request.tenant, **updates}
+        paystack_selected = "paystack" in (merged_for_paystack.get("payment_methods") or []) or merged_for_paystack.get("payment_provider") == "paystack"
+        if paystack_selected and merged_for_paystack.get("bank_code") and merged_for_paystack.get("bank_account_number"):
+            try:
+                subaccount = create_paystack_subaccount(tenant={"id": str(tenant_id), **merged_for_paystack}, percentage_charge=tenant_paystack_platform_fee_percent())
+                updates["paystack_subaccount_code"] = subaccount["subaccount_code"]
+                updates["paystack_settlement_bank"] = subaccount.get("settlement_bank") or merged_for_paystack.get("bank_name") or ""
+                updates["paystack_settlement_account_name"] = subaccount.get("account_name") or ""
+                updates["paystack_settlement_status"] = "ready" if subaccount.get("active") else "pending_verification"
+            except PaymentProviderError as exc:
+                return ok({"message": exc.public_message, "settlement_status": "setup_failed"}, exc.status_code)
+            except Exception as exc:
+                logger.exception("Paystack settlement subaccount creation failed tenant=%s", tenant_id)
+                return ok({"message": "Could not verify this bank account with Paystack. Check the bank code and account number.", "settlement_status": "setup_failed"}, 502)
     if updates.get("theme_mode") not in {None, "light", "dark", "system"}:
         updates["theme_mode"] = "light"
     if "theme_mode" in updates:
@@ -2642,6 +2667,11 @@ def settings_business(request):
     merged = {**request.tenant, **updates}
     updates.setdefault("payment_provider", "mpesa")
     updates["settlement_status"] = "ready" if tenant_payout_details(merged).get("payout_phone") else "missing_payout_details"
+
+    merged = {**request.tenant, **updates}
+    if not ("paystack_settlement_status" in updates and updates["paystack_settlement_status"] == "not_configured"):
+        updates["paystack_settlement_status"] = merged.get("paystack_settlement_status") or ("ready" if merged.get("paystack_subaccount_code") else "not_configured")
+    merged = {**request.tenant, **updates}
 
     ref(f"tenants/{tenant_id}").update(updates)
     return ok({"success": True, "message": "Business settings saved", "config": tenant_theme_payload({**merged, **updates})})
