@@ -33,7 +33,6 @@ def unique_apps(apps):
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY") or "dev-only-change-me"
 API_BASE_PATH = env_path("API_BASE_PATH", "api")
 ADMIN_API_PATH = env_path("ADMIN_API_PATH", "admin")
-ADMIN_API_ALLOWED_HOSTS = env_list("ADMIN_API_ALLOWED_HOSTS")
 ADMIN_FRONTEND_PATH = env_path("ADMIN_FRONTEND_PATH", "admin")
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "")
 PAYSTACK_CURRENCY = os.getenv("PAYSTACK_CURRENCY", "KES")
@@ -44,6 +43,21 @@ TENANT_BASE_DOMAIN = os.getenv("TENANT_BASE_DOMAIN", "expressnet.app")
 PUBLIC_BASE_DOMAIN = os.getenv("PUBLIC_BASE_DOMAIN", "expressnetbilling.com").strip().lower()
 APP_SUBDOMAIN = os.getenv("APP_SUBDOMAIN", "app").strip().lower()
 ADMIN_SUBDOMAIN = os.getenv("ADMIN_SUBDOMAIN", "admin").strip().lower()
+ADMIN_API_ALLOWED_HOSTS = env_list("ADMIN_API_ALLOWED_HOSTS")
+for admin_api_host in (
+    PUBLIC_BASE_DOMAIN,
+    f"www.{PUBLIC_BASE_DOMAIN}" if PUBLIC_BASE_DOMAIN else "",
+    f"{APP_SUBDOMAIN}.{PUBLIC_BASE_DOMAIN}" if APP_SUBDOMAIN and PUBLIC_BASE_DOMAIN else "",
+    os.getenv("RAILWAY_PUBLIC_DOMAIN", ""),
+    os.getenv("RAILWAY_STATIC_URL", ""),
+):
+    if admin_api_host:
+        parsed_admin_api_host = urlparse(
+            admin_api_host if "://" in admin_api_host else f"//{admin_api_host}"
+        ).hostname
+        if parsed_admin_api_host:
+            ADMIN_API_ALLOWED_HOSTS.append(parsed_admin_api_host.lower())
+ADMIN_API_ALLOWED_HOSTS = list(dict.fromkeys(ADMIN_API_ALLOWED_HOSTS))
 API_MAX_BODY_BYTES = int(os.getenv("API_MAX_BODY_BYTES", str(2 * 1024 * 1024)))
 API_GATEWAY_RATE_LIMIT = int(os.getenv("API_GATEWAY_RATE_LIMIT", "300"))
 API_GATEWAY_RATE_WINDOW = int(os.getenv("API_GATEWAY_RATE_WINDOW", "60"))
