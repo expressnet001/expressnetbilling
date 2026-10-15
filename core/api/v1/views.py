@@ -43,6 +43,9 @@ from billing_api.services import (
     configure_router_port,
     selected_daraja_method,
     initiate_daraja_payment,
+    initiate_paystack_checkout,
+    verify_paystack_transaction,
+    paystack_signature_valid,
     make_daraja_callback_token,
     verify_daraja_callback_token,
     _build_port_command_script,
@@ -711,6 +714,47 @@ def tenant_subscription_status(request):
                 "subscription": tenant_subscription_payload(subscription),
             }
         )
+    if data.get("method") == "paystack":
+        if not tenant.email:
+            return ok({"message": "Add an email address to your tenant account before using Paystack checkout."}, 400)
+        amount, sales, percent = system_subscription_amount(tenant)
+        if amount <= 0:
+            return ok({"message": "No system fee is due because this tenant has no successful internet sales for the current month."}, 400)
+        reference = f"SYS-{tenant.pk}-{secrets.token_urlsafe(12)}".replace("_", "-")
+        callback_base = normalize_public_url(os.getenv("PAYSTACK_CALLBACK_BASE_URL") or getattr(settings, "PAYSTACK_CALLBACK_BASE_URL", "") or public_base_url(request))
+        callback_url = f"{callback_base}/api/paystack/callback"
+        try:
+            checkout = initiate_paystack_checkout(
+                email=tenant.email,
+                amount=amount,
+                reference=reference,
+                callback_url=callback_url,
+                currency=os.getenv("PAYSTACK_CURRENCY") or (ref("site_settings").get() or {}).get("paystack_currency") or "KES",
+                metadata={"kind": "tenant_subscription", "tenant_id": str(tenant.pk), "subscription_id": str(subscription.pk), "sales_basis": str(sales), "fee_percent": str(percent)},
+            )
+        except PaymentProviderError as exc:
+            return ok({"message": exc.public_message}, exc.status_code)
+        return ok({"success": True, "message": "Continue to Paystack to pay the system fee.", "authorizationUrl": checkout.get("authorization_url"), "payment_id": reference, "subscription": tenant_subscription_payload(subscription)})
+    if str(data.get("provider") or "").lower() == "paystack":
+        reference = str(data.get("reference") or "").strip()
+        if not reference:
+            return ok({"message": "Paystack reference is required"}, 400)
+        try:
+            transaction = verify_paystack_transaction(reference)
+        except Exception:
+            logger.exception("Tenant subscription Paystack verification failed tenant=%s", tenant.pk)
+            return ok({"message": "Paystack payment could not be verified"}, 502)
+        metadata = transaction.get("metadata") or {}
+        if transaction.get("status") != "success" or str(metadata.get("tenant_id")) != str(tenant.pk) or metadata.get("kind") != "tenant_subscription":
+            return ok({"message": "Paystack transaction does not match this tenant subscription"}, 400)
+        expected_amount = int((system_subscription_amount(tenant)[0] * 100).quantize(Decimal("1")))
+        if int(transaction.get("amount") or 0) != expected_amount:
+            return ok({"message": "Paystack transaction amount does not match the current subscription fee"}, 400)
+        if subscription.payments.filter(reference=reference).exists():
+            return ok({"success": True, "message": "Payment already recorded", "subscription": tenant_subscription_payload(subscription)})
+        paid_amount = Decimal(str(transaction.get("amount") or 0)) / Decimal("100")
+        payment = record_subscription_payment(subscription, {"amount": paid_amount, "currency": transaction.get("currency") or "KES", "method": "paystack", "reference": reference}, "Paystack")
+        return ok({"success": True, "message": "Paystack payment verified", "payment": payment.as_dict(), "subscription": tenant_subscription_payload(subscription)})
     reference = str(data.get("reference") or "").strip()
     if not reference:
         return ok({"message": "Payment reference is required"}, 400)
@@ -1387,7 +1431,13 @@ PLATFORM_NOTIFICATION_TYPES = [
 
 
 def _platform_settings():
-    return ref("site_settings").get() or {}
+    data = dict(ref("site_settings").get() or {})
+    data.pop("paystack_secret_key", None)
+    return data
+
+
+def _paystack_key_configured():
+    return bool((ref("site_settings").get() or {}).get("paystack_secret_key") or os.getenv("PAYSTACK_SECRET_KEY"))
 
 
 @csrf_exempt
@@ -1426,10 +1476,13 @@ def admin_integrations(request):
     if method(request, "GET"):
         return ok({
             "notification_provider": settings_data.get("notification_provider") or "slek",
+            "collection_provider": settings_data.get("collection_provider") or "daraja",
             "whatsapp_enabled": settings_data.get("whatsapp_enabled") is not False,
             "apiwap_base_url": settings_data.get("apiwap_base_url") or "https://api.apiwap.com/api/v1",
             "has_apiwap_api_key": bool(settings_data.get("apiwap_api_key")),
             "apiwap_status": "connected" if settings_data.get("apiwap_api_key") else "not_configured",
+            "has_paystack_secret_key": _paystack_key_configured(),
+            "paystack_currency": settings_data.get("paystack_currency") or os.getenv("PAYSTACK_CURRENCY") or "KES",
         })
 
     data = body(request)
@@ -1452,14 +1505,22 @@ def admin_integrations(request):
 
     updates = {
         "notification_provider": str(data.get("notification_provider") or data.get("provider") or settings_data.get("notification_provider") or "slek").strip(),
+        "collection_provider": str(data.get("collection_provider") or settings_data.get("collection_provider") or "daraja").strip().lower(),
         "whatsapp_enabled": data.get("whatsapp_enabled") is not False,
         "apiwap_base_url": str(data.get("apiwap_base_url") or settings_data.get("apiwap_base_url") or "https://api.apiwap.com/api/v1").strip(),
         "integrations_updated_at": iso_now(),
         "updated_by": request.admin["adminId"],
     }
+    if updates["collection_provider"] not in {"daraja", "paystack"}:
+        return ok({"message": "Collection provider must be Daraja or Paystack"}, 400)
     apiwap_api_key = str(data.get("apiwap_api_key") or "").strip()
     if apiwap_api_key and apiwap_api_key not in {MASKED, "********", "••••••••"}:
         updates["apiwap_api_key"] = apiwap_api_key
+    paystack_secret = str(data.get("paystack_secret_key") or "").strip()
+    if paystack_secret and paystack_secret not in {MASKED, "********"}:
+        updates["paystack_secret_key"] = paystack_secret
+    if data.get("paystack_currency"):
+        updates["paystack_currency"] = str(data["paystack_currency"]).strip().upper()
     ref("site_settings").update(updates)
     write_audit_log(request.admin["adminId"], request.admin["email"], "UPDATE_INTEGRATIONS", target_type="site", request=request, metadata={"updated_fields": [key for key in updates if key != "apiwap_api_key"]})
     saved = {**settings_data, **updates}
@@ -1470,6 +1531,9 @@ def admin_integrations(request):
         "whatsapp_enabled": saved.get("whatsapp_enabled") is not False,
         "apiwap_base_url": saved.get("apiwap_base_url") or "https://api.apiwap.com/api/v1",
         "has_apiwap_api_key": bool(saved.get("apiwap_api_key")),
+        "collection_provider": saved.get("collection_provider") or "daraja",
+        "has_paystack_secret_key": _paystack_key_configured(),
+        "paystack_currency": saved.get("paystack_currency") or os.getenv("PAYSTACK_CURRENCY") or "KES",
     })
 
 

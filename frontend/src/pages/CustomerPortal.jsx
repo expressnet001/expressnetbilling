@@ -90,6 +90,7 @@ export default function CustomerPortal() {
   const [tenant, setTenant] = useState(null);
   const [packages, setPackages] = useState([]);
   const [phone, setPhone] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
   const [serviceType, setServiceType] = useState(pathServiceType() || 'hotspot');
   const [pppoeUsername, setPppoeUsername] = useState('');
   const [macAddress, setMacAddress] = useState('');
@@ -125,7 +126,7 @@ export default function CustomerPortal() {
         ]);
         setTenant(tenantRes.data);
         const methods = Array.isArray(tenantRes.data?.payment_methods) ? tenantRes.data.payment_methods : [];
-        setPaymentMethod(preferredDarajaMethod(methods));
+        setPaymentMethod(tenantRes.data?.collection_provider === 'paystack' ? 'paystack' : preferredDarajaMethod(methods));
         let loadedPackages = responseItems(packagesRes.data);
         if (routeServiceType && loadedPackages.length === 0) {
           const fallbackRes = await publicApi.get(`/public/${tenantId}/packages`);
@@ -162,14 +163,16 @@ export default function CustomerPortal() {
     const dst = params.get('dst') || params.get('link-orig') || '';
     setRouterContext({ routerIp, clientIp, mac: routerMac || '', linkLogin, dst });
     const reference = params.get('reference') || params.get('trxref');
-    if (!reference) return;
+    const returnedPaymentId = params.get('payment_id') || params.get('paymentId');
+    if (!reference && !returnedPaymentId) return;
     // Carried through by the router's hotspot login.html redirect (see
     // hotspot_login_redirect_html) so we know which trapped device to hand
     // the credentials back to after a successful payment.
     async function verify() {
       setVerifying(true);
       try {
-        const { data } = await publicApi.get(`/public/${tenantId}/verify?reference=${encodeURIComponent(reference)}`);
+        const verifyQuery = returnedPaymentId ? `payment_id=${encodeURIComponent(returnedPaymentId)}&verify_token=${encodeURIComponent(params.get('verify_token') || params.get('verifyToken') || '')}` : `reference=${encodeURIComponent(reference)}`;
+        const { data } = await publicApi.get(`/public/${tenantId}/verify?${verifyQuery}`);
         setVerification(data);
         if (data.success) {
           toast.success('Payment verified');
@@ -305,9 +308,15 @@ export default function CustomerPortal() {
         router_mac: routerContext.mac,
         link_login: routerContext.linkLogin,
         dst: routerContext.dst,
-        payment_method: paymentMethod,
+        provider: paymentMethod === 'paystack' ? 'paystack' : undefined,
+        email: customerEmail,
+        payment_method: paymentMethod === 'paystack' ? undefined : paymentMethod,
       });
-      toast.success(data.message || 'Check your phone for the M-Pesa prompt');
+      if (data.authorizationUrl) {
+        window.location.href = data.authorizationUrl;
+        return;
+      }
+      toast.success(data.message || 'Check your phone for the payment prompt');
       if (data.paymentId) {
         setVerification({ success: false, status: 'pending', message: 'Waiting for M-Pesa confirmation.' });
         setPendingPayment({ id: data.paymentId, verifyToken: data.verifyToken || '' });
@@ -623,9 +632,14 @@ export default function CustomerPortal() {
                   onChange={(event) => setPhone(event.target.value)}
                 />
               </div>
+              {paymentMethod === 'paystack' && (
+                <label className="form-label mt-4 block" htmlFor="customerEmail">Email for Paystack receipt
+                  <input id="customerEmail" type="email" className="form-input mt-1" placeholder="you@example.com" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} required />
+                </label>
+              )}
               <button type="button" className="btn-primary mt-5 w-full" onClick={pay} disabled={paying}>
                 <CreditCard size={18} />
-                {paying ? (paymentMethod ? 'Sending STK push...' : 'Opening checkout...') : (paymentMethod ? 'Send M-Pesa Prompt' : 'Continue to Checkout')}
+        {paying ? (paymentMethod === 'paystack' ? 'Opening Paystack...' : 'Sending STK push...') : (paymentMethod === 'paystack' ? 'Pay with Paystack' : 'Send M-Pesa Prompt')}
               </button>
             </div>
           </section>

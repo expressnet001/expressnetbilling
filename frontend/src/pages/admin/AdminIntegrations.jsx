@@ -8,6 +8,9 @@ const MASKED = '********';
 export default function AdminIntegrations() {
   const [form, setForm] = useState({
     notification_provider: 'slek',
+    collection_provider: 'daraja',
+    paystack_secret_key: '',
+    paystack_currency: 'KES',
     whatsapp_enabled: true,
     apiwap_base_url: 'https://api.apiwap.com/api/v1',
     apiwap_api_key: '',
@@ -24,6 +27,9 @@ export default function AdminIntegrations() {
       setForm((current) => ({
         ...current,
         notification_provider: data.notification_provider || 'slek',
+        collection_provider: data.collection_provider || 'daraja',
+        paystack_secret_key: data.has_paystack_secret_key ? MASKED : '',
+        paystack_currency: data.paystack_currency || 'KES',
         whatsapp_enabled: data.whatsapp_enabled !== false,
         apiwap_base_url: data.apiwap_base_url || 'https://api.apiwap.com/api/v1',
         apiwap_api_key: data.has_apiwap_api_key ? MASKED : '',
@@ -49,7 +55,7 @@ export default function AdminIntegrations() {
     try {
       const { data } = await adminApi.patch('/admin/integrations', form);
       toast.success(data.message || 'Integration settings saved');
-      setForm((current) => ({ ...current, apiwap_api_key: data.has_apiwap_api_key ? MASKED : '' }));
+      setForm((current) => ({ ...current, apiwap_api_key: data.has_apiwap_api_key ? MASKED : '', paystack_secret_key: data.has_paystack_secret_key ? MASKED : '' }));
     } catch (error) {
       toast.error(error.response?.data?.error || error.response?.data?.message || 'Failed to save integrations');
     } finally {
@@ -82,6 +88,7 @@ export default function AdminIntegrations() {
   if (loading) return <p className="text-xs text-slate-600">Loading integrations...</p>;
 
   const connected = form.apiwap_api_key === MASKED;
+  const paystackConnected = form.paystack_secret_key === MASKED;
 
   return (
     <div className="space-y-5">
@@ -141,6 +148,31 @@ export default function AdminIntegrations() {
           <CheckCircle2 size={14} className={connected ? 'text-emerald-500' : 'text-slate-400'} />
           ApiWap is used when the provider is set to ApiWap and an API key is saved.
         </p>
+      </section>
+
+      <section className="theme-card rounded-lg border p-5 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="theme-text flex items-center gap-2 text-sm font-semibold"><PlugZap size={17} /> Customer Payment Collection</h2>
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${form.collection_provider === 'paystack' ? (paystackConnected ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700') : 'bg-slate-100 text-slate-600'}`}>
+            {form.collection_provider === 'paystack' ? (paystackConnected ? 'Paystack configured' : 'Paystack key required') : 'Daraja selected'}
+          </span>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">Choose the provider used for customer checkout across tenant portals. A Paystack subaccount can be configured per tenant for direct settlement.</p>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <label className="form-label">Collection provider
+            <select name="collection_provider" className="form-input" value={form.collection_provider} onChange={update}>
+              <option value="daraja">Daraja (M-Pesa)</option>
+              <option value="paystack">Paystack</option>
+            </select>
+          </label>
+          <label className="form-label">Paystack currency
+            <input name="paystack_currency" className="form-input" value={form.paystack_currency} onChange={update} maxLength={10} />
+          </label>
+          <label className="form-label md:col-span-2">Paystack secret key
+            <input name="paystack_secret_key" type="password" className="form-input" value={form.paystack_secret_key} onChange={update} placeholder="sk_test_… or sk_live_…" autoComplete="new-password" />
+          </label>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">Set webhook URL in Paystack to <code>{window.location.origin}/api/paystack/webhook</code>. Keep the secret key private; it is never returned by the API.</p>
       </section>
     </div>
   );

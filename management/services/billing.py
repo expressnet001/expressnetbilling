@@ -4,11 +4,13 @@ import hmac
 import json
 import logging
 import os
+import secrets
 import re
 import socket
 import ssl
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from decimal import Decimal, ROUND_HALF_UP
 from urllib.parse import parse_qsl, urlparse, urlsplit, urlunsplit
 
 import bcrypt
@@ -27,6 +29,57 @@ logger = logging.getLogger(__name__)
 
 
 from core.services.shared import *
+
+
+PAYSTACK_API_BASE = "https://api.paystack.co"
+
+
+def paystack_secret_key():
+    configured = os.getenv("PAYSTACK_SECRET_KEY") or getattr(settings, "PAYSTACK_SECRET_KEY", "")
+    if configured:
+        return str(configured).strip()
+    try:
+        platform_settings = ref("site_settings").get() or {}
+    except Exception:
+        platform_settings = {}
+    return str(platform_settings.get("paystack_secret_key") or "").strip()
+
+
+def initiate_paystack_checkout(*, email, amount, reference, callback_url, currency="KES", subaccount=None, bearer="account", metadata=None):
+    secret = paystack_secret_key()
+    if not secret:
+        raise PaymentProviderError("Paystack checkout is not configured yet. Please contact support.", "Missing PAYSTACK_SECRET_KEY", 503)
+    minor_units = int((Decimal(str(amount)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    payload = {"email": email, "amount": str(minor_units), "currency": currency or "KES", "reference": reference, "callback_url": callback_url, "metadata": metadata or {}}
+    if subaccount:
+        payload["subaccount"] = subaccount
+        payload["bearer"] = "subaccount" if bearer == "subaccount" else "account"
+    response = requests.post(f"{PAYSTACK_API_BASE}/transaction/initialize", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json=payload, timeout=30)
+    response.raise_for_status()
+    result = response.json()
+    if result.get("status") is not True or not result.get("data", {}).get("authorization_url"):
+        raise PaymentProviderError(result.get("message") or "Paystack did not return a checkout URL", json.dumps(result), 502)
+    return result["data"]
+
+
+def verify_paystack_transaction(reference):
+    secret = paystack_secret_key()
+    if not secret:
+        raise PaymentProviderError("Paystack verification is not configured.", "Missing PAYSTACK_SECRET_KEY", 503)
+    response = requests.get(f"{PAYSTACK_API_BASE}/transaction/verify/{reference}", headers={"Authorization": f"Bearer {secret}"}, timeout=30)
+    response.raise_for_status()
+    result = response.json()
+    if result.get("status") is not True:
+        raise PaymentProviderError(result.get("message") or "Paystack verification failed", json.dumps(result), 502)
+    return result.get("data") or {}
+
+
+def paystack_signature_valid(raw_body, signature):
+    secret = paystack_secret_key()
+    if not secret or not signature:
+        return False
+    expected = hmac.new(secret.encode(), raw_body, hashlib.sha512).hexdigest()
+    return hmac.compare_digest(expected, str(signature))
 
 def initiate_daraja_stk(tenant, payment_id, amount, phone, payment_method="daraja_paybill", description=None):
     """Start a Daraja STK push for a tenant Paybill or Buy Goods account."""

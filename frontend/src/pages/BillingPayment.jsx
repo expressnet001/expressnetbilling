@@ -40,6 +40,19 @@ export default function BillingPayment() {
 
   const submit = async (event) => {
     event.preventDefault();
+    if (form.method === 'paystack') {
+      setSaving(true);
+      try {
+        const { data } = await api.post('/subscription/status', { method: 'paystack' });
+        if (!data.authorizationUrl) throw new Error(data.message || 'Paystack checkout URL was not returned');
+        window.location.href = data.authorizationUrl;
+      } catch (error) {
+        toast.error(error.response?.data?.message || error.message || 'Could not start Paystack checkout');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     if (!form.reference.trim()) {
       toast.error('Enter your payment reference');
       return;
@@ -108,6 +121,7 @@ export default function BillingPayment() {
             <select className="form-input" value={form.method} onChange={(event) => setForm((current) => ({ ...current, method: event.target.value }))}>
               <option value="manual">Manual</option>
               <option value="mpesa">M-Pesa</option>
+              <option value="paystack">Paystack</option>
               <option value="bank">Bank</option>
             </select>
           </label>

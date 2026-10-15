@@ -34,6 +34,9 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY") or "dev-only-change-me"
 API_BASE_PATH = env_path("API_BASE_PATH", "api")
 ADMIN_API_PATH = env_path("ADMIN_API_PATH", "admin")
 ADMIN_FRONTEND_PATH = env_path("ADMIN_FRONTEND_PATH", "admin")
+PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "")
+PAYSTACK_CURRENCY = os.getenv("PAYSTACK_CURRENCY", "KES")
+PAYSTACK_CALLBACK_BASE_URL = os.getenv("PAYSTACK_CALLBACK_BASE_URL", os.getenv("PUBLIC_APP_URL", ""))
 
 USE_DJANGO_TENANTS = env_bool("USE_DJANGO_TENANTS", False)
 TENANT_BASE_DOMAIN = os.getenv("TENANT_BASE_DOMAIN", "expressnet.app")

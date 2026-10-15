@@ -95,6 +95,8 @@ class ApiGatewayMiddleware:
         window = max(1, int(getattr(settings, "API_GATEWAY_RATE_WINDOW", 60)))
         if api_path.endswith("/auth/login"):
             limit = min(limit, 20)
+        if api_path.endswith("/paystack/webhook"):
+            limit = min(limit, 120)
         key = (_client_ip(request), request.method.upper(), api_path)
         now = time.time()
         try:
