@@ -125,7 +125,6 @@ PAYMENT_SETTING_FIELDS = {
     "payout_phone",
     "bank_account_number",
     "bank_code",
-    "bank_name",
     "daraja_consumer_key",
     "daraja_consumer_secret",
     "daraja_shortcode",
@@ -655,12 +654,10 @@ def tenant_theme_payload(tenant):
         "business_number": tenant.get("business_number") or "",
         "payout_phone": tenant.get("payout_phone") or tenant.get("phone") or "",
         "bank_code": tenant.get("bank_code") or "",
-        "bank_name": tenant.get("bank_name") or "",
         "bank_account_number": tenant.get("bank_account_number") or "",
         "payment_methods": tenant.get("payment_methods") if isinstance(tenant.get("payment_methods"), list) else ["daraja_paybill"],
         "paystack_bearer": tenant.get("paystack_bearer") or "account",
-        "paystack_settlement_status": tenant.get("paystack_settlement_status") or ("ready" if tenant.get("paystack_subaccount_code") else "not_configured"),
-        "paystack_settlement_account_name": tenant.get("paystack_settlement_account_name") or "",
+        "bank_account_status": tenant.get("paystack_settlement_status") or ("ready" if tenant.get("paystack_subaccount_code") else "not_configured"),
         "daraja_consumer_key": tenant.get("daraja_consumer_key") or "",
         "daraja_consumer_secret": tenant.get("daraja_consumer_secret") or "",
         "daraja_shortcode": tenant.get("daraja_shortcode") or "",
@@ -913,7 +910,7 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
             raise PaymentProviderError("A valid email address is required for Paystack hosted checkout.", "No valid customer email", 400)
         subaccount = str(tenant.get("paystack_subaccount_code") or "").strip()
         if not subaccount or tenant.get("paystack_settlement_status") != "ready":
-            raise PaymentProviderError("This tenant has no verified Paystack bank settlement account. Save the bank code and account number in Payment methods first.", "Missing Paystack subaccount", 400)
+            raise PaymentProviderError("Bank account is not ready for customer payments. Save the bank code and account number in Payment methods first.", "Bank account not ready", 400)
         if not tenant.get("bank_code") or not tenant.get("bank_account_number"):
             raise PaymentProviderError("The tenant bank details are missing. Paystack checkout is blocked until settlement details are saved.", "Missing tenant settlement bank details", 400)
         metadata = {"kind": "internet_payment", "tenant_id": str(tenant_id), "payment_id": str(payment_ref.key)}
@@ -2516,6 +2513,14 @@ def report_expenses(request):
     return ok({"results": [{"category": key, "amount": round(value, 2)} for key, value in sorted(by_category.items())], "total_expenses": round(total_expenses, 2), "net_revenue": round(revenue - total_expenses, 2)})
 
 
+def _save_tenant_extra_postgres(tenant_id, key, value):
+    tenant_record = Tenant.objects.get(pk=tenant_id)
+    tenant_extra = dict(tenant_record.extra or {})
+    tenant_extra[key] = value
+    tenant_record.extra = tenant_extra
+    tenant_record.save(update_fields=["extra", "updated_at"])
+
+
 @csrf_exempt
 @api_view(["POST"])
 @tenant_required
@@ -2537,7 +2542,7 @@ def request_payment_change_code(request):
         "used": False,
         "created_at": iso_now(),
     }
-    ref(f"tenants/{tenant['id']}/payment_change_challenge").set(challenge)
+    _save_tenant_extra_postgres(tenant["id"], "payment_change_challenge", challenge)
     message = f"Your Expressnet payment settings confirmation code is {code}. It expires in 10 minutes. Do not share it."
     channels = []
     if phone:
@@ -2552,7 +2557,7 @@ def request_payment_change_code(request):
         if sent:
             channels.append("email")
     if not channels:
-        ref(f"tenants/{tenant['id']}/payment_change_challenge").delete()
+        _save_tenant_extra_postgres(tenant["id"], "payment_change_challenge", {})
         return ok(
             {
                 "success": True,
@@ -2584,7 +2589,6 @@ def settings_business(request):
         "business_number",
         "payout_phone",
         "bank_code",
-        "bank_name",
         "bank_account_number",
         "payment_methods",
         "payment_provider",
@@ -2605,7 +2609,7 @@ def settings_business(request):
         if data.get(field) != request.tenant.get(field)
     }
     if changed_payment_fields:
-        challenge = ref(f"tenants/{tenant_id}/payment_change_challenge").get() or {}
+        challenge = request.tenant.get("payment_change_challenge") or {}
         challenge_id = str(data.get("payment_change_id") or "").strip()
         challenge_code = str(data.get("payment_change_code") or "").strip()
         current_password = str(data.get("current_password") or "")
@@ -2623,10 +2627,13 @@ def settings_business(request):
         if not challenge_confirmed and not password_confirmed:
             attempts = int(challenge.get("attempts") or 0) + 1 if challenge else 0
             if challenge:
-                ref(f"tenants/{tenant_id}/payment_change_challenge").update({"attempts": attempts})
+                challenge["attempts"] = attempts
+                _save_tenant_extra_postgres(tenant_id, "payment_change_challenge", challenge)
             return ok({"message": "A valid confirmation code or account password is required to change payment settings."}, 403)
         if challenge_confirmed:
-            ref(f"tenants/{tenant_id}/payment_change_challenge").update({"used": True, "used_at": iso_now()})
+            challenge["used"] = True
+            challenge["used_at"] = iso_now()
+            _save_tenant_extra_postgres(tenant_id, "payment_change_challenge", challenge)
     for field in allowed:
         if field in data:
             if field == "dark_mode":
@@ -2659,23 +2666,33 @@ def settings_business(request):
         field in updates and str(updates[field]).strip() != str(request.tenant.get(field) or "").strip()
         for field in ("bank_code", "bank_account_number")
     )
+    merged_for_paystack = {**request.tenant, **updates}
+    paystack_selected = (
+        "paystack" in (merged_for_paystack.get("payment_methods") or [])
+        or merged_for_paystack.get("payment_provider") == "paystack"
+    )
     if bank_details_changed:
-        updates.pop("paystack_subaccount_code", None)
+        updates["paystack_subaccount_code"] = ""
+        updates["paystack_settlement_account_name"] = ""
         updates["paystack_settlement_status"] = "not_configured"
         merged_for_paystack = {**request.tenant, **updates}
-        paystack_selected = "paystack" in (merged_for_paystack.get("payment_methods") or []) or merged_for_paystack.get("payment_provider") == "paystack"
-        if paystack_selected and merged_for_paystack.get("bank_code") and merged_for_paystack.get("bank_account_number"):
-            try:
-                subaccount = create_paystack_subaccount(tenant={"id": str(tenant_id), **merged_for_paystack}, percentage_charge=tenant_paystack_platform_fee_percent())
-                updates["paystack_subaccount_code"] = subaccount["subaccount_code"]
-                updates["paystack_settlement_bank"] = subaccount.get("settlement_bank") or merged_for_paystack.get("bank_name") or ""
-                updates["paystack_settlement_account_name"] = subaccount.get("account_name") or ""
-                updates["paystack_settlement_status"] = "ready" if subaccount.get("active") else "pending_verification"
-            except PaymentProviderError as exc:
-                return ok({"message": exc.public_message, "settlement_status": "setup_failed"}, exc.status_code)
-            except Exception as exc:
-                logger.exception("Paystack settlement subaccount creation failed tenant=%s", tenant_id)
-                return ok({"message": "Could not verify this bank account with Paystack. Check the bank code and account number.", "settlement_status": "setup_failed"}, 502)
+    if (
+        paystack_selected
+        and merged_for_paystack.get("bank_code")
+        and merged_for_paystack.get("bank_account_number")
+        and not merged_for_paystack.get("paystack_subaccount_code")
+    ):
+        try:
+            subaccount = create_paystack_subaccount(tenant={"id": str(tenant_id), **merged_for_paystack}, percentage_charge=tenant_paystack_platform_fee_percent())
+            updates["paystack_subaccount_code"] = subaccount["subaccount_code"]
+            updates["paystack_settlement_bank"] = subaccount.get("settlement_bank") or merged_for_paystack.get("bank_code") or ""
+            updates["paystack_settlement_account_name"] = subaccount.get("account_name") or ""
+            updates["paystack_settlement_status"] = "ready" if subaccount.get("active") else "pending_verification"
+        except PaymentProviderError as exc:
+            return ok({"message": exc.public_message, "settlement_status": "setup_failed"}, exc.status_code)
+        except Exception:
+            logger.exception("Paystack bank account setup failed tenant=%s", tenant_id)
+            return ok({"message": "Could not set up this bank account. Verify the bank code and account number, then try again.", "settlement_status": "setup_failed"}, 502)
     if updates.get("theme_mode") not in {None, "light", "dark", "system"}:
         updates["theme_mode"] = "light"
     if "theme_mode" in updates:
@@ -2686,14 +2703,23 @@ def settings_business(request):
 
     merged = {**request.tenant, **updates}
     updates.setdefault("payment_provider", "mpesa")
-    updates["settlement_status"] = "ready" if tenant_payout_details(merged).get("payout_phone") else "missing_payout_details"
+    updates["settlement_status"] = "ready" if (
+        tenant_payout_details(merged).get("payout_phone")
+        or (
+            "paystack" in (merged.get("payment_methods") or [])
+            and bool(merged.get("bank_code") and merged.get("bank_account_number"))
+            and merged.get("paystack_settlement_status") == "ready"
+        )
+    ) else "missing_payout_details"
 
     merged = {**request.tenant, **updates}
     if not ("paystack_settlement_status" in updates and updates["paystack_settlement_status"] == "not_configured"):
         updates["paystack_settlement_status"] = merged.get("paystack_settlement_status") or ("ready" if merged.get("paystack_subaccount_code") else "not_configured")
     merged = {**request.tenant, **updates}
 
-    ref(f"tenants/{tenant_id}").update(updates)
+    tenant_record = Tenant.objects.get(pk=tenant_id)
+    tenant_record.apply_data(updates)
+    tenant_record.save()
     return ok({"success": True, "message": "Business settings saved", "config": tenant_theme_payload({**merged, **updates})})
 
 

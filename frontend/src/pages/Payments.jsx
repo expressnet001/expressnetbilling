@@ -112,7 +112,7 @@ export default function Payments() {
       });
       const method = onlineMethod((data.payment_methods || [])[0]);
       setSelectedMethod(['daraja_paybill', 'daraja_buygoods', 'paystack'].includes(method) ? method : 'daraja_paybill');
-      setSettlementStatus(data.paystack_settlement_status || data.settlement_status || 'missing_payout_details');
+      setSettlementStatus(data.bank_account_status || data.paystack_settlement_status || data.settlement_status || 'missing_payout_details');
     }).catch(() => {});
   }, []);
 
@@ -161,7 +161,7 @@ export default function Payments() {
         payload.payment_change_code = confirmation.trim();
       }
       const { data } = await api.patch('/settings/business', payload);
-      setSettlementStatus(data.config?.paystack_settlement_status || data.config?.settlement_status || 'not_configured');
+      setSettlementStatus(data.config?.bank_account_status || data.config?.paystack_settlement_status || data.config?.settlement_status || 'not_configured');
       toast.success('Payment settings saved');
       setMethodsOpen(false);
     } catch (error) {
