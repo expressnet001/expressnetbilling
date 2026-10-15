@@ -73,6 +73,10 @@ export default function Payments() {
   const [selectedMethod, setSelectedMethod] = useState('daraja_paybill');
   const [savingMethods, setSavingMethods] = useState(false);
   const [methodsOpen, setMethodsOpen] = useState(false);
+  const [verificationOpen, setVerificationOpen] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [passwordFallback, setPasswordFallback] = useState(false);
+  const [paymentChangeId, setPaymentChangeId] = useState('');
   const [settlementStatus, setSettlementStatus] = useState('not_created');
   const [page, setPage] = useState(1);
   const pageSize = 10;
@@ -122,23 +126,33 @@ export default function Payments() {
     setPaymentSettings((current) => ({ ...current, methods: [normalized] }));
   };
   const savePaymentMethods = async () => {
+    if (selectedMethod === 'paystack' && (!String(paymentSettings.bankCode || '').trim() || !String(paymentSettings.bankAccount || '').trim())) {
+      toast.error('Enter the bank code and bank account number.');
+      return;
+    }
     setSavingMethods(true);
     try {
       const { data: challenge } = await api.post('/settings/payment-change/request');
-      const usesPasswordFallback = Boolean(challenge.password_fallback);
-      const confirmation = window.prompt(
-        usesPasswordFallback
-          ? 'Confirmation code could not be delivered. Enter your account password to confirm this change:'
-          : 'Enter the confirmation code sent to the tenant phone or email:',
-      );
-      if (!confirmation?.trim()) {
-        toast.error('Payment settings were not changed because confirmation was cancelled.');
-        return;
-      }
-      if (selectedMethod === 'paystack' && (!String(paymentSettings.bankCode || '').trim() || !String(paymentSettings.bankAccount || '').trim())) {
-        toast.error('Enter the bank code and bank account number.');
-        return;
-      }
+      setPasswordFallback(Boolean(challenge.password_fallback));
+      setPaymentChangeId(challenge.challenge_id || '');
+      setVerificationCode('');
+      setVerificationOpen(true);
+    } catch (error) {
+      const responseMessage = error.response?.data?.message || error.response?.data?.error;
+      toast.error(responseMessage || (error.response ? `Could not request verification (${error.response.status})` : error.message || 'Could not request verification'));
+    } finally {
+      setSavingMethods(false);
+    }
+  };
+
+  const confirmPaymentMethods = async (event) => {
+    event.preventDefault();
+    if (!verificationCode.trim()) {
+      toast.error(passwordFallback ? 'Enter your account password.' : 'Enter the verification code.');
+      return;
+    }
+    setSavingMethods(true);
+    try {
       const payload = {
         payment_methods: paymentSettings.methods.map(onlineMethod),
         business_number: paymentSettings.businessNumber,
@@ -154,15 +168,16 @@ export default function Payments() {
         daraja_shortcode_type: onlineMethod(selectedMethod) === 'daraja_buygoods' ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline',
         payment_provider: selectedMethod === 'paystack' ? 'paystack' : 'mpesa',
       };
-      if (usesPasswordFallback) {
-        payload.current_password = confirmation.trim();
+      if (passwordFallback) {
+        payload.current_password = verificationCode.trim();
       } else {
-        payload.payment_change_id = challenge.challenge_id;
-        payload.payment_change_code = confirmation.trim();
+        payload.payment_change_id = paymentChangeId;
+        payload.payment_change_code = verificationCode.trim();
       }
       const { data } = await api.patch('/settings/business', payload);
       setSettlementStatus(data.config?.bank_account_status || data.config?.paystack_settlement_status || data.config?.settlement_status || 'not_configured');
       toast.success('Payment settings saved');
+      setVerificationOpen(false);
       setMethodsOpen(false);
     } catch (error) {
       const responseMessage = error.response?.data?.message || error.response?.data?.error;
@@ -258,6 +273,14 @@ export default function Payments() {
         {selectedMethod === 'daraja_buygoods' && <div className="mt-4 grid gap-3 sm:grid-cols-2"><input className="form-input" placeholder="Consumer key" value={paymentSettings.consumerKey} onChange={(e) => setPaymentSettings((c) => ({ ...c, consumerKey: e.target.value }))} /><input className="form-input" type="password" placeholder="Consumer secret" value={paymentSettings.consumerSecret} onChange={(e) => setPaymentSettings((c) => ({ ...c, consumerSecret: e.target.value }))} /><input className="form-input" type="password" placeholder="Passkey" value={paymentSettings.passkey} onChange={(e) => setPaymentSettings((c) => ({ ...c, passkey: e.target.value }))} /><input className="form-input" placeholder="M-Pesa shortcode" value={paymentSettings.shortcode} onChange={(e) => setPaymentSettings((c) => ({ ...c, shortcode: e.target.value }))} /><input className="form-input" value="CustomerBuyGoodsOnline" readOnly /><input className="form-input" placeholder="Buy Goods till number" value={paymentSettings.tillNumber} onChange={(e) => setPaymentSettings((c) => ({ ...c, tillNumber: e.target.value }))} /><select className="form-input" value={paymentSettings.environment} onChange={(e) => setPaymentSettings((c) => ({ ...c, environment: e.target.value }))}><option value="production">Production</option><option value="sandbox">Sandbox</option></select></div>}
         <div className="mt-5 flex justify-end"><button type="button" className="btn-primary" onClick={savePaymentMethods} disabled={savingMethods}>{savingMethods ? 'Saving...' : 'Save payment methods'}</button></div>
         <p className={`mt-3 text-xs font-semibold ${['active', 'ready'].includes(settlementStatus) ? 'text-emerald-600' : 'text-amber-600'}`}>{selectedMethod === 'paystack' ? 'Bank account status' : 'Payment settings'}: {['active', 'ready'].includes(settlementStatus) ? 'Ready - customer payments go to this account.' : settlementStatus.replaceAll('_', ' ')}</p>
+      </section></div>}
+
+      {verificationOpen && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4" role="presentation"><section role="dialog" aria-modal="true" aria-labelledby="payment-verification-title" className="theme-card w-full max-w-md rounded-lg border p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-3"><div><h2 id="payment-verification-title" className="page-title text-base">Verify payment changes</h2><p className="page-subtitle mt-1">{passwordFallback ? 'Code delivery failed. Enter your account password to confirm this change.' : 'Enter the verification code sent to your tenant phone or email.'}</p></div><button type="button" className="btn-secondary" onClick={() => setVerificationOpen(false)} aria-label="Close verification dialog"><X size={16} /></button></div>
+        <form onSubmit={confirmPaymentMethods}>
+          <label className="form-label mt-4">{passwordFallback ? 'Account password' : 'Verification code'}<input autoFocus className="form-input" type={passwordFallback ? 'password' : 'text'} inputMode={passwordFallback ? undefined : 'numeric'} autoComplete={passwordFallback ? 'current-password' : 'one-time-code'} value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} placeholder={passwordFallback ? 'Enter account password' : 'Enter verification code'} /></label>
+          <div className="mt-5 flex justify-end gap-2"><button type="button" className="btn-secondary" onClick={() => setVerificationOpen(false)} disabled={savingMethods}>Cancel</button><button type="submit" className="btn-primary" disabled={savingMethods}>{savingMethods ? 'Verifying...' : 'Verify and save'}</button></div>
+        </form>
       </section></div>}
 
       <section className="border-b border-slate-200">

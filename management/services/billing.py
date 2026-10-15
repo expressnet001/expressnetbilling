@@ -118,16 +118,22 @@ def create_paystack_subaccount(*, tenant, percentage_charge=0):
         raise PaymentProviderError("Add the tenant bank code and account number before enabling Paystack settlement.", "Missing tenant bank details", 400)
     payload = {
         "business_name": str(tenant.get("business_name") or tenant.get("email") or "Tenant").strip(),
-        "settlement_bank": bank_code,
+        "bank_code": bank_code,
         "account_number": account_number,
         "percentage_charge": float(percentage_charge),
-        "primary_contact_email": str(tenant.get("email") or "").strip(),
-        "primary_contact_name": str(tenant.get("owner_name") or tenant.get("business_name") or "").strip(),
-        "primary_contact_phone": str(tenant.get("phone") or "").strip(),
         "metadata": {"tenant_id": str(tenant.get("id") or "")},
     }
     response = requests.post(f"{PAYSTACK_API_BASE}/subaccount", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json=payload, timeout=30)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        try:
+            result = response.json()
+        except (ValueError, json.JSONDecodeError):
+            result = {}
+        message = str(result.get("message") or "Paystack rejected this bank account setup.").strip()
+        # Keep Paystack's actionable validation message, but never expose request credentials.
+        raise PaymentProviderError(message, f"Paystack subaccount HTTP {response.status_code}", response.status_code if 400 <= response.status_code < 500 else 502) from exc
     result = response.json()
     code = (result.get("data") or {}).get("subaccount_code")
     if result.get("status") is not True or not code:
