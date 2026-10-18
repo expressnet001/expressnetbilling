@@ -24,7 +24,7 @@ function formatDate(value) {
 
 function MetricCard({ title, value, helper }) {
   return (
-    <div className="rounded-md p-5 shadow-[0_18px_30px_rgba(15,23,42,0.10)]" style={{ background: 'var(--app-accent-soft)', color: 'var(--app-text)' }}>
+    <div className="rounded-md p-5 shadow-[0_18px_30px_rgba(15,23,42,0.10)]" style={{ background: 'var(--app-metric-card-bg)', color: 'var(--app-text)' }}>
       <p className="text-xs font-semibold">{title}</p>
       <div className="mt-3 flex items-center gap-2">
         <p className="text-xl font-bold">{formatKES(value)}</p>

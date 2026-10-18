@@ -90,6 +90,15 @@ from billing_api.services import (
 
 logger = logging.getLogger(__name__)
 
+from network.services.tr069 import (
+    Tr069Error,
+    find_device_by_serial,
+    public_device,
+    queue_task as queue_tr069_task,
+    validate_parameter_name,
+    writable_parameter_names,
+)
+
 
 def sanitize_router_login_url(value):
     raw = str(value or "").strip()
@@ -536,7 +545,7 @@ def tenant_theme_payload(tenant):
         "theme_color": tenant.get("theme_color") or "#fa8200",
         "font": tenant.get("font") or "Work Sans",
         "dark_mode": bool(tenant.get("dark_mode")),
-        "theme_mode": tenant.get("theme_mode") or ("dark" if tenant.get("dark_mode") else "light"),
+        "theme_mode": tenant.get("theme_mode") or ("dark" if tenant.get("dark_mode") else "dark"),
         "business_number": tenant.get("business_number") or "",
         "bank_code": tenant.get("bank_code") or "",
         "bank_name": tenant.get("bank_name") or "",
@@ -4556,5 +4565,94 @@ def settings_mikrotik_test(request):
             "warning": f"Using provisioning snapshot/agent mode. Live RouterOS API is not reachable from the server yet: {live_error}",
         })
     return ok({"message": f"Unable to reach MikroTik live API. Confirm public host/port forwarding to {candidate.get('mikrotik_port') or 8728}: {live_error}"}, 400)
+
+
+def _tr069_customer(request, customer_id):
+    customer = ref(f"tenants/{request.tenant['id']}/customers/{customer_id}").get()
+    if not customer:
+        return None, ok({"message": "PPPoE customer not found"}, 404)
+    if str(customer.get("service_type") or "").lower() != "pppoe":
+        return None, ok({"message": "TR-069 configuration is available for PPPoE customers only."}, 400)
+    serial_number = str(customer.get("router_serial_number") or "").strip()
+    if not serial_number:
+        return None, ok({"message": "Add this customer's router serial number in the PPPoE customer details first."}, 400)
+    return {"id": str(customer_id), **customer, "router_serial_number": serial_number}, None
+
+
+@csrf_exempt
+@api_view(["GET"])
+@tenant_required
+def tr069_customer_device(request, customer_id):
+    customer, error_response = _tr069_customer(request, customer_id)
+    if error_response:
+        return error_response
+    try:
+        device = find_device_by_serial(customer["router_serial_number"])
+        if not device:
+            return ok({"message": "No TR-069 device with this serial number has contacted the ACS yet. Check the serial number and the router's ACS settings."}, 404)
+        return ok({
+            "customer": {"id": customer["id"], "name": customer.get("name") or "", "username": customer.get("username") or "", "router_serial_number": customer["router_serial_number"]},
+            "device": public_device(device),
+        })
+    except Tr069Error as exc:
+        return ok({"message": exc.message}, exc.status_code)
+
+
+@csrf_exempt
+@api_view(["POST"])
+@tenant_required
+def tr069_customer_configure(request, customer_id):
+    customer, error_response = _tr069_customer(request, customer_id)
+    if error_response:
+        return error_response
+    data = body(request)
+    entries = data.get("parameters")
+    if not isinstance(entries, list) or not entries or len(entries) > 30:
+        return ok({"message": "Add between 1 and 30 parameter changes."}, 400)
+    try:
+        device = find_device_by_serial(customer["router_serial_number"])
+        if not device:
+            return ok({"message": "This customer's router is not currently registered with the TR-069 ACS."}, 404)
+        writable_names = writable_parameter_names(device)
+        values = []
+        seen = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return ok({"message": "Each parameter change must include a name and value."}, 400)
+            name = validate_parameter_name(entry.get("name"))
+            if name not in writable_names:
+                return ok({"message": f"The router has not reported {name} as a writable parameter."}, 400)
+            if name in seen:
+                return ok({"message": f"Parameter {name} appears more than once."}, 400)
+            seen.add(name)
+            value_type = str(entry.get("type") or "xsd:string").strip()
+            if value_type not in {"xsd:string", "xsd:boolean", "xsd:int", "xsd:unsignedInt", "xsd:long", "xsd:unsignedLong", "xsd:dateTime"}:
+                return ok({"message": "Unsupported TR-069 parameter value type."}, 400)
+            values.append([name, entry.get("value"), value_type])
+        task = queue_tr069_task(device.get("_id"), {"name": "setParameterValues", "parameterValues": values})
+        return ok({"success": True, "message": "Configuration task sent to the customer's router. It may remain queued until the router checks in.", "task_id": (task or {}).get("_id"), "task": task}, 202)
+    except Tr069Error as exc:
+        return ok({"message": exc.message}, exc.status_code)
+
+
+@csrf_exempt
+@api_view(["POST"])
+@tenant_required
+def tr069_customer_action(request, customer_id, action):
+    customer, error_response = _tr069_customer(request, customer_id)
+    if error_response:
+        return error_response
+    if action not in {"refresh", "reboot"}:
+        return ok({"message": "Unsupported TR-069 device action."}, 404)
+    try:
+        device = find_device_by_serial(customer["router_serial_number"])
+        if not device:
+            return ok({"message": "This customer's router is not currently registered with the TR-069 ACS."}, 404)
+        task = {"name": "refreshObject", "objectName": ""} if action == "refresh" else {"name": "reboot"}
+        result = queue_tr069_task(device.get("_id"), task)
+        message = "Device refresh requested." if action == "refresh" else "Router reboot requested."
+        return ok({"success": True, "message": f"{message} The task may remain queued until the router checks in.", "task_id": (result or {}).get("_id"), "task": result}, 202)
+    except Tr069Error as exc:
+        return ok({"message": exc.message}, exc.status_code)
 
 

@@ -39,7 +39,7 @@ function sameDay(a, b) {
 
 function MetricCard({ title, value, helper }) {
   return (
-    <div className="rounded-md p-4 shadow-[0_18px_30px_rgba(15,23,42,0.12)]" style={{ background: 'var(--app-accent-soft)', color: 'var(--app-text)' }}>
+    <div className="rounded-md p-4 shadow-[0_18px_30px_rgba(15,23,42,0.12)]" style={{ background: 'var(--app-metric-card-bg)', color: 'var(--app-text)' }}>
       <p className="text-xs font-semibold">{title}</p>
       <div className="mt-3 flex items-center gap-2">
         <p className="text-xl font-bold">{formatKES(value)}</p>
@@ -71,6 +71,7 @@ export default function Payments() {
     environment: 'production',
   });
   const [selectedMethod, setSelectedMethod] = useState('daraja_paybill');
+  const [kenyanBanks, setKenyanBanks] = useState([]);
   const [savingMethods, setSavingMethods] = useState(false);
   const [methodsOpen, setMethodsOpen] = useState(false);
   const [verificationOpen, setVerificationOpen] = useState(false);
@@ -100,6 +101,11 @@ export default function Payments() {
 
   useEffect(() => {
     loadPayments();
+    api.get('/settings/payment-banks').then(({ data }) => {
+      setKenyanBanks(Array.isArray(data.results) ? data.results : []);
+    }).catch((error) => {
+      toast.error(error.response?.data?.message || 'Could not load the Kenyan bank list');
+    });
     api.get('/settings/business').then(({ data }) => {
       setPaymentSettings({
       methods: data.payment_methods || ['daraja_paybill'],
@@ -265,7 +271,7 @@ export default function Payments() {
           <button type="button" className="btn-secondary" onClick={() => setMethodsOpen(false)}>Close</button>
         </div>
         <select className="form-input mt-4" value={selectedMethod} onChange={(e) => selectMethod(e.target.value)}><option value="paybill">Paybill</option><option value="daraja_paybill">Paybill - Daraja API</option><option value="buygoods">Buy Goods</option><option value="daraja_buygoods">Buy Goods - Daraja API</option><option value="paystack">Bank account</option></select>
-        {selectedMethod === 'paystack' && <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="form-label">Bank code<input className="form-input" placeholder="Enter bank code" value={paymentSettings.bankCode} onChange={(e) => setPaymentSettings((c) => ({ ...c, bankCode: e.target.value }))} /></label><label className="form-label">Bank account number<input className="form-input" placeholder="Enter bank account number" value={paymentSettings.bankAccount} onChange={(e) => setPaymentSettings((c) => ({ ...c, bankAccount: e.target.value }))} /></label></div>}
+        {selectedMethod === 'paystack' && <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="form-label">Bank<select className="form-input" value={paymentSettings.bankCode} onChange={(e) => setPaymentSettings((c) => ({ ...c, bankCode: e.target.value }))}><option value="">Select a bank</option>{paymentSettings.bankCode && !kenyanBanks.some((bank) => bank.code === paymentSettings.bankCode) && <option value={paymentSettings.bankCode}>Saved bank (code {paymentSettings.bankCode})</option>}{kenyanBanks.map((bank) => <option key={`${bank.code}-${bank.name}`} value={bank.code}>{bank.name}</option>)}</select></label><label className="form-label">Bank code<input className="form-input" value={paymentSettings.bankCode} readOnly placeholder="Selected bank code" /></label><label className="form-label">Bank account number<input className="form-input" placeholder="Enter bank account number" value={paymentSettings.bankAccount} onChange={(e) => setPaymentSettings((c) => ({ ...c, bankAccount: e.target.value }))} /></label><label className="form-label">Paybill or business number<input className="form-input" placeholder="Enter Paybill or business number" value={paymentSettings.businessNumber} onChange={(e) => setPaymentSettings((c) => ({ ...c, businessNumber: e.target.value }))} /></label></div>}
         {selectedMethod === 'paystack' && <p className="mt-3 text-xs text-slate-600">Customer payments will be paid into this bank account.</p>}
         {selectedMethod === 'paybill' && <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="form-label">Paybill number<input className="form-input" placeholder="Enter Paybill number" value={paymentSettings.businessNumber} onChange={(e) => setPaymentSettings((c) => ({ ...c, businessNumber: e.target.value }))} /></label><label className="form-label">Account number<input className="form-input" placeholder="Enter account number" value={paymentSettings.bankAccount} onChange={(e) => setPaymentSettings((c) => ({ ...c, bankAccount: e.target.value }))} /></label></div>}
         {selectedMethod === 'buygoods' && <div className="mt-4"><label className="form-label">Buy Goods till number<input className="form-input" placeholder="Enter Till number" value={paymentSettings.businessNumber} onChange={(e) => setPaymentSettings((c) => ({ ...c, businessNumber: e.target.value }))} /></label></div>}

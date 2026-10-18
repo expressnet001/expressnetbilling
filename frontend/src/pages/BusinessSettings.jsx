@@ -28,7 +28,7 @@ const initialSettings = {
   companyName: 'EXPRESS PLOT WIFI',
   themeColor: DEFAULT_TENANT_THEME.themeColor,
   themeMode: DEFAULT_TENANT_THEME.themeMode,
-  darkMode: false,
+  darkMode: DEFAULT_TENANT_THEME.darkMode,
   font: DEFAULT_TENANT_THEME.font,
   supportPhone: '+254716632851',
   supportEmail: '',
@@ -50,8 +50,8 @@ function fromApi(data) {
   return {
     companyName: data.business_name || initialSettings.companyName,
     themeColor: data.theme_color || initialSettings.themeColor,
-    themeMode: data.theme_mode || (data.dark_mode ? 'dark' : 'light'),
-    darkMode: (data.theme_mode || (data.dark_mode ? 'dark' : 'light')) === 'dark',
+    themeMode: data.theme_mode || (data.dark_mode ? 'dark' : DEFAULT_TENANT_THEME.themeMode),
+    darkMode: (data.theme_mode || (data.dark_mode ? 'dark' : DEFAULT_TENANT_THEME.themeMode)) === 'dark',
     font: data.font || initialSettings.font,
     supportPhone: data.phone || initialSettings.supportPhone,
     supportEmail: data.support_email || '',
@@ -136,11 +136,13 @@ export default function BusinessSettings() {
   const [saving, setSaving] = useState(false);
   const [logoUploading, setLogoUploading] = useState(false);
   const [dangerConfirm, setDangerConfirm] = useState('');
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     async function loadSettings() {
       try {
+        const stored = getStoredTenantSettings();
         const [{ data }, notifications] = await Promise.all([
           api.get('/settings/business'),
           api.get('/settings/notifications').catch(() => ({ data: null })),
@@ -149,6 +151,12 @@ export default function BusinessSettings() {
           setSettings((current) => ({
             ...current,
             ...fromApi(data),
+            // Keep a locally selected appearance until the server response
+            // confirms the same values. This avoids defaults from a partial
+            // tenant response overwriting the user's saved color or mode.
+            themeColor: stored.themeColor || fromApi(data).themeColor,
+            themeMode: stored.themeMode || fromApi(data).themeMode,
+            darkMode: (stored.themeMode || fromApi(data).themeMode) === 'dark',
             ...(notifications.data ? {
               notificationProvider: notifications.data.provider || current.notificationProvider,
               smsEnabled: notifications.data.sms_enabled !== false,
@@ -164,7 +172,10 @@ export default function BusinessSettings() {
       } catch (error) {
         toast.error(error.response?.data?.message || 'Failed to load business settings');
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted) {
+          setLoading(false);
+          setSettingsLoaded(true);
+        }
       }
     }
     loadSettings();
@@ -174,8 +185,9 @@ export default function BusinessSettings() {
   }, []);
 
   useEffect(() => {
+    if (!settingsLoaded) return;
     storeTenantSettings(settings);
-  }, [settings]);
+  }, [settings, settingsLoaded]);
 
   const update = (event) => {
     const { checked, name, type, value } = event.target;

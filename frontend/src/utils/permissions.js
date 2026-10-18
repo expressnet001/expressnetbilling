@@ -1,6 +1,6 @@
 export const PAGE_PERMISSIONS = {
   dashboard: ['/dashboard'],
-  customers: ['/customers', '/pppoe-customers', '/hotspot-customers', '/static-customers', '/active-users'],
+  customers: ['/customers', '/pppoe-customers', '/hotspot-customers', '/static-customers', '/active-users', '/tr069'],
   tickets: ['/tickets'],
   packages: ['/packages'],
   payments: ['/payments'],

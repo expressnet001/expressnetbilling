@@ -123,7 +123,19 @@ def create_paystack_subaccount(*, tenant, percentage_charge=0):
         "percentage_charge": float(percentage_charge),
         "metadata": {"tenant_id": str(tenant.get("id") or "")},
     }
-    response = requests.post(f"{PAYSTACK_API_BASE}/subaccount", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json=payload, timeout=30)
+    try:
+        response = requests.post(
+            f"{PAYSTACK_API_BASE}/subaccount",
+            headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise PaymentProviderError(
+            "Could not connect to Paystack while setting up this bank account. Check the server connection and try again.",
+            f"Paystack subaccount request failed: {type(exc).__name__}",
+            502,
+        ) from exc
     try:
         response.raise_for_status()
     except requests.HTTPError as exc:
@@ -132,13 +144,96 @@ def create_paystack_subaccount(*, tenant, percentage_charge=0):
         except (ValueError, json.JSONDecodeError):
             result = {}
         message = str(result.get("message") or "Paystack rejected this bank account setup.").strip()
+        logger.warning(
+            "Paystack rejected subaccount setup: status=%s bank_code=%s message=%s",
+            response.status_code,
+            bank_code,
+            message,
+        )
         # Keep Paystack's actionable validation message, but never expose request credentials.
         raise PaymentProviderError(message, f"Paystack subaccount HTTP {response.status_code}", response.status_code if 400 <= response.status_code < 500 else 502) from exc
-    result = response.json()
+    try:
+        result = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise PaymentProviderError(
+            "Paystack returned an unreadable response while setting up this bank account. Try again shortly.",
+            f"Paystack subaccount returned invalid JSON: {type(exc).__name__}",
+            502,
+        ) from exc
     code = (result.get("data") or {}).get("subaccount_code")
     if result.get("status") is not True or not code:
         raise PaymentProviderError(result.get("message") or "Paystack did not create a settlement subaccount.", json.dumps(result), 502)
     return result["data"]
+
+
+def fetch_paystack_subaccount(subaccount_code):
+    """Return an existing subaccount, or None when Paystack no longer has it."""
+    secret = paystack_secret_key()
+    if not secret:
+        raise PaymentProviderError("Paystack is not configured yet. Please contact support.", "Missing Paystack secret key", 503)
+    response = requests.get(
+        f"{PAYSTACK_API_BASE}/subaccount/{subaccount_code}",
+        headers={"Authorization": f"Bearer {secret}"},
+        timeout=20,
+    )
+    if response.status_code == 404:
+        return None
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        try:
+            result = response.json()
+        except (ValueError, json.JSONDecodeError):
+            result = {}
+        raise PaymentProviderError(
+            "Could not verify this tenant's Paystack subaccount. Try again shortly.",
+            str(result.get("message") or f"Paystack subaccount lookup HTTP {response.status_code}"),
+            response.status_code if 400 <= response.status_code < 500 else 502,
+        ) from exc
+    try:
+        result = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise PaymentProviderError(
+            "Paystack returned an unreadable response while checking the tenant subaccount.",
+            f"Paystack subaccount lookup returned invalid JSON: {type(exc).__name__}",
+            502,
+        ) from exc
+    if result.get("status") is not True:
+        # A successful HTTP response with no subaccount data is treated as stale.
+        if "not found" in str(result.get("message") or "").casefold():
+            return None
+        raise PaymentProviderError(
+            "Could not verify this tenant's Paystack subaccount. Try again shortly.",
+            str(result.get("message") or "Paystack subaccount lookup failed"),
+            502,
+        )
+    return result.get("data") or None
+
+
+def list_paystack_banks(country="kenya"):
+    """Return active banks and codes from Paystack's current bank directory."""
+    secret = paystack_secret_key()
+    if not secret:
+        raise PaymentProviderError("Bank list is not available right now. Please contact support.", "Missing PAYSTACK_SECRET_KEY", 503)
+    response = requests.get(
+        f"{PAYSTACK_API_BASE}/bank",
+        headers={"Authorization": f"Bearer {secret}"},
+        params={"country": country, "perPage": 100},
+        timeout=20,
+    )
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        raise PaymentProviderError("Could not load the bank list from Paystack. Try again shortly.", f"Paystack bank list HTTP {response.status_code}", response.status_code if 400 <= response.status_code < 500 else 502) from exc
+    result = response.json()
+    if result.get("status") is not True:
+        raise PaymentProviderError("Could not load the bank list from Paystack. Try again shortly.", str(result.get("message") or "Bank list unavailable"), 502)
+    banks = [
+        {"name": str(bank.get("name") or "").strip(), "code": str(bank.get("code") or "").strip()}
+        for bank in result.get("data") or []
+        if bank.get("active") and not bank.get("is_deleted") and bank.get("name") and bank.get("code")
+    ]
+    return sorted(banks, key=lambda bank: bank["name"].casefold())
 
 
 def verify_paystack_transaction(reference):

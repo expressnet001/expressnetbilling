@@ -41,6 +41,7 @@ import Salary from './pages/Salary';
 import StaffReports from './pages/StaffReports';
 import StaffRequisitions from './pages/StaffRequisitions';
 import StaffTasks from './pages/StaffTasks';
+import Tr069 from './pages/Tr069';
 import Vouchers from './pages/Vouchers';
 import { ADMIN_DASHBOARD_PATH, ADMIN_LOGIN_PATH, ADMIN_PATH, adminPath, isAdminHost } from './config/adminPaths';
 import { TENANT_THEME_EVENT, applyTenantTheme } from './utils/theme';
@@ -93,6 +94,7 @@ function DashboardLayout() {
             <Route path="/emails" element={<Emails />} />
             <Route path="/mikrotik" element={<MikrotikSettings />} />
             <Route path="/mikrotik/link" element={<MikrotikLink />} />
+            <Route path="/tr069" element={<Tr069 />} />
             <Route path="/equipment" element={<Equipment />} />
             <Route path="/staff/tasks" element={<StaffTasks />} />
             <Route path="/staff/reports" element={<StaffReports />} />

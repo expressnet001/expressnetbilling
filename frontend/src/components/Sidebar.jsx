@@ -89,8 +89,8 @@ const sections = [
     title: 'Network',
     icon: Network,
     links: [
-      { to: '/mikrotik', label: 'Mikrotik', icon: Gauge },
-      { to: '/mikrotik/link', label: 'TR-069', icon: Gauge },
+      { to: '/mikrotik', label: 'Link MikroTik', icon: Gauge },
+      { to: '/tr069', label: 'TR-069', icon: RadioTower },
       // { to: '/reports/network', label: 'Network Report', icon: RadioTower },
     ],
   },

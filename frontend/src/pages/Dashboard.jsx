@@ -23,6 +23,7 @@ import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import { TENANT_THEME_EVENT, resolveThemeMode } from '../utils/theme';
 
 // ---------------------------------------------------------------------------
 // Shared type scale (kept in one place so headings/labels stay consistent
@@ -45,17 +46,6 @@ const TYPE = {
 // lines and axis labels track the active theme instead of hardcoded slate.
 const GRID_LINE = 'var(--app-border, #e2e8f0)';
 const AXIS_TEXT = 'var(--app-muted, #64748b)';
-
-function readDarkMode() {
-  try {
-    const settings = JSON.parse(localStorage.getItem('tenant_settings') || '{}');
-    const mode = settings.themeMode || (settings.darkMode ? 'dark' : 'light');
-    if (mode === 'system') return window.matchMedia('(prefers-color-scheme: dark)').matches;
-    return mode === 'dark';
-  } catch {
-    return false;
-  }
-}
 
 function formatKES(value) {
   return `KSh ${Number(value || 0).toLocaleString('en-KE')}`;
@@ -230,10 +220,12 @@ export default function Dashboard() {
   const [trafficSeries, setTrafficSeries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [darkMode, setDarkMode] = useState(() => readDarkMode());
+  const [darkMode, setDarkMode] = useState(() => document.documentElement.dataset.theme === 'dark');
 
   useEffect(() => {
-    setDarkMode(readDarkMode());
+    const syncTheme = () => setDarkMode(document.documentElement.dataset.theme === 'dark');
+    syncTheme();
+    window.addEventListener(TENANT_THEME_EVENT, syncTheme);
     let mounted = true;
 
     async function loadRouterResources({ silent = false } = {}) {
@@ -290,6 +282,7 @@ export default function Dashboard() {
     const dashboardTimer = window.setInterval(() => loadDashboard({ silent: true }), 30000);
     return () => {
       mounted = false;
+      window.removeEventListener(TENANT_THEME_EVENT, syncTheme);
       window.clearInterval(routerTimer);
       window.clearInterval(dashboardTimer);
     };

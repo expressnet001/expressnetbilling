@@ -3,8 +3,8 @@ export const TENANT_THEME_EVENT = 'tenant-theme-change';
 
 export const DEFAULT_TENANT_THEME = {
   themeColor: '#fa8200',
-  themeMode: 'light',
-  darkMode: false,
+  themeMode: 'dark',
+  darkMode: true,
   font: 'Inter',
 };
 
@@ -33,6 +33,13 @@ function mixWithBlack(hex, amount = 0.18) {
   return `#${mixed.map((part) => part.toString(16).padStart(2, '0')).join('')}`;
 }
 
+function mixWithDark(hex, amount = 0.2, dark = '#1f2127') {
+  const color = normalizeThemeColor(hex).slice(1).match(/.{2}/g).map((part) => parseInt(part, 16));
+  const base = hexToRgb(dark);
+  const mixed = color.map((part, index) => Math.round(base[index] + (part - base[index]) * amount));
+  return `#${mixed.map((part) => part.toString(16).padStart(2, '0')).join('')}`;
+}
+
 function hexToRgb(hex) {
   const color = normalizeThemeColor(hex).slice(1);
   return [0, 2, 4].map((start) => parseInt(color.slice(start, start + 2), 16));
@@ -50,7 +57,7 @@ function contrastColor(hex) {
 function normalizeMode(value, darkMode = false) {
   const mode = String(value || '').trim().toLowerCase();
   if (['light', 'dark', 'system'].includes(mode)) return mode;
-  return darkMode ? 'dark' : 'light';
+  return darkMode ? 'dark' : DEFAULT_TENANT_THEME.themeMode;
 }
 
 export function resolveThemeMode(mode) {
@@ -91,12 +98,25 @@ export function applyTenantTheme(settings = getStoredTenantSettings()) {
   if (!canUseDom()) return normalizeTenantTheme(settings);
 
   const theme = normalizeTenantTheme(settings);
+  const persisted = getStoredTenantSettings();
+  // Authentication responses contain only partial tenant metadata. Do not let
+  // those partial objects reset the persisted appearance to application defaults.
+  if (!('themeColor' in settings) && !('theme_color' in settings)) {
+    theme.themeColor = normalizeThemeColor(persisted.themeColor || persisted.theme_color);
+    theme.theme_color = theme.themeColor;
+  }
+  if (!('themeMode' in settings) && !('theme_mode' in settings) && !('darkMode' in settings) && !('dark_mode' in settings)) {
+    theme.themeMode = normalizeMode(persisted.themeMode || persisted.theme_mode, persisted.darkMode ?? persisted.dark_mode);
+    theme.theme_mode = theme.themeMode;
+    theme.darkMode = theme.themeMode === 'dark';
+    theme.dark_mode = theme.darkMode;
+  }
   const root = document.documentElement;
   const accentSoft = mixWithWhite(theme.themeColor);
   const accentStrong = mixWithBlack(theme.themeColor);
-  const accentMuted = mixWithWhite(theme.themeColor, 0.9);
   const resolvedMode = resolveThemeMode(theme.themeMode);
   const isDark = resolvedMode === 'dark';
+  const accentMuted = isDark ? mixWithDark(theme.themeColor, 0.18) : mixWithWhite(theme.themeColor, 0.9);
 
   root.style.setProperty('--dashboard-color', theme.themeColor);
   root.style.setProperty('--dashboard-color-soft', accentSoft);
@@ -104,6 +124,7 @@ export function applyTenantTheme(settings = getStoredTenantSettings()) {
   root.style.setProperty('--app-accent-soft', accentSoft);
   root.style.setProperty('--app-accent-strong', accentStrong);
   root.style.setProperty('--app-accent-muted', accentMuted);
+  root.style.setProperty('--app-metric-card-bg', isDark ? '#1f2127' : accentSoft);
   root.style.setProperty('--app-accent-contrast', contrastColor(theme.themeColor));
   root.style.setProperty('--app-focus-ring', mixWithWhite(theme.themeColor, 0.82));
   root.style.setProperty('--app-tint-bg', isDark ? '#111318' : mixWithWhite(theme.themeColor, 0.96));
@@ -128,6 +149,21 @@ export function storeTenantSettings(settings = {}) {
     ...getStoredTenantSettings(),
     ...settings,
   };
+  // Never replace stored appearance with defaults supplied by a partial tenant
+  // object (for example the tenant object returned at login).
+  const hasColor = Object.prototype.hasOwnProperty.call(settings, 'themeColor') || Object.prototype.hasOwnProperty.call(settings, 'theme_color');
+  const hasMode = Object.prototype.hasOwnProperty.call(settings, 'themeMode') || Object.prototype.hasOwnProperty.call(settings, 'theme_mode') || Object.prototype.hasOwnProperty.call(settings, 'darkMode') || Object.prototype.hasOwnProperty.call(settings, 'dark_mode');
+  const stored = getStoredTenantSettings();
+  if (!hasColor) {
+    merged.themeColor = stored.themeColor || stored.theme_color || DEFAULT_TENANT_THEME.themeColor;
+    merged.theme_color = merged.themeColor;
+  }
+  if (!hasMode) {
+    merged.themeMode = stored.themeMode || stored.theme_mode || DEFAULT_TENANT_THEME.themeMode;
+    merged.theme_mode = merged.themeMode;
+    merged.darkMode = merged.themeMode === 'dark';
+    merged.dark_mode = merged.darkMode;
+  }
   const theme = normalizeTenantTheme(merged);
   window.localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(theme));
   applyTenantTheme(theme);

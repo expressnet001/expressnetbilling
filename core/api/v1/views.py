@@ -818,7 +818,7 @@ def tenant_theme_payload(tenant):
         "theme_color": tenant.get("theme_color") or "#fa8200",
         "font": tenant.get("font") or "Work Sans",
         "dark_mode": bool(tenant.get("dark_mode")),
-        "theme_mode": tenant.get("theme_mode") or ("dark" if tenant.get("dark_mode") else "light"),
+        "theme_mode": tenant.get("theme_mode") or ("dark" if tenant.get("dark_mode") else "dark"),
         "business_number": tenant.get("business_number") or "",
         "bank_code": tenant.get("bank_code") or "",
         "bank_name": tenant.get("bank_name") or "",

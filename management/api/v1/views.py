@@ -8,7 +8,7 @@ import secrets
 import ipaddress
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from io import StringIO
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
@@ -19,7 +19,7 @@ from django.core.files.storage import FileSystemStorage
 from django.core.management import call_command
 from django.core.mail import send_mail
 from django.core.paginator import Paginator
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
 from django.db.utils import OperationalError
 from django.db.models import Count, Sum
 from django.http import FileResponse, Http404, HttpResponse
@@ -45,6 +45,9 @@ from billing_api.services import (
     initiate_paystack_checkout,
     initiate_paystack_mpesa_stk,
     create_paystack_subaccount,
+    fetch_paystack_subaccount,
+    list_paystack_banks,
+    tenant_paystack_platform_fee_percent,
     verify_paystack_transaction,
     paystack_signature_valid,
     initiate_daraja_b2c,
@@ -122,6 +125,7 @@ SENSITIVE_FIELDS = {"password", "mikrotik_pass", }
 PAYMENT_SETTING_FIELDS = {
     "payment_methods",
     "payment_provider",
+    "business_number",
     "payout_phone",
     "bank_account_number",
     "bank_code",
@@ -650,7 +654,7 @@ def tenant_theme_payload(tenant):
         "theme_color": tenant.get("theme_color") or "#fa8200",
         "font": tenant.get("font") or "Work Sans",
         "dark_mode": bool(tenant.get("dark_mode")),
-        "theme_mode": tenant.get("theme_mode") or ("dark" if tenant.get("dark_mode") else "light"),
+        "theme_mode": tenant.get("theme_mode") or ("dark" if tenant.get("dark_mode") else "dark"),
         "business_number": tenant.get("business_number") or "",
         "payout_phone": tenant.get("payout_phone") or tenant.get("phone") or "",
         "bank_code": tenant.get("bank_code") or "",
@@ -910,9 +914,10 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
             raise PaymentProviderError("A valid email address is required for Paystack hosted checkout.", "No valid customer email", 400)
         subaccount = str(tenant.get("paystack_subaccount_code") or "").strip()
         if not subaccount or tenant.get("paystack_settlement_status") != "ready":
-            raise PaymentProviderError("Bank account is not ready for customer payments. Save the bank code and account number in Payment methods first.", "Bank account not ready", 400)
-        if not tenant.get("bank_code") or not tenant.get("bank_account_number"):
-            raise PaymentProviderError("The tenant bank details are missing. Paystack checkout is blocked until settlement details are saved.", "Missing tenant settlement bank details", 400)
+            tenant = _ensure_tenant_paystack_subaccount(tenant_id, tenant)
+            subaccount = str(tenant.get("paystack_subaccount_code") or "").strip()
+        if not subaccount or tenant.get("paystack_settlement_status") != "ready":
+            raise PaymentProviderError("Bank account setup is not complete for this tenant. The tenant must save a valid bank account before Paystack payments can be accepted.", "Bank account not ready", 400)
         metadata = {"kind": "internet_payment", "tenant_id": str(tenant_id), "payment_id": str(payment_ref.key)}
         if is_mpesa_stk:
             charge = initiate_paystack_mpesa_stk(email=email, amount=amount_payable, phone=phone, reference=reference, currency=currency, subaccount=subaccount, bearer=tenant.get("paystack_bearer") or "account", metadata=metadata)
@@ -932,6 +937,42 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
         logger.exception("Paystack checkout initialization failed tenant=%s payment=%s", tenant_id, payment_ref.key)
         payment_ref.update({"status": "failed", "failed_at": iso_now(), "callback_result_desc": str(exc)})
         return ok({"success": False, "message": "Paystack checkout could not be started. Please try again.", "paymentId": payment_ref.key}, 502)
+
+
+def _ensure_tenant_paystack_subaccount(tenant_id, tenant):
+    """Create and persist a tenant's Paystack subaccount when Paystack is the active collection method."""
+    with transaction.atomic():
+        tenant_record = Tenant.objects.select_for_update().get(pk=tenant_id)
+        current = tenant_record.as_dict()
+        existing_code = str(current.get("paystack_subaccount_code") or "").strip()
+        if existing_code and current.get("paystack_settlement_status") == "ready":
+            existing = fetch_paystack_subaccount(existing_code)
+            if existing and existing.get("active"):
+                return {**tenant, **current}
+            # The provider-side account was removed or deactivated. Clear the
+            # stale local code so the normal creation flow can make a fresh one.
+            current["paystack_subaccount_code"] = ""
+            current["paystack_settlement_status"] = "not_configured"
+        if not current.get("bank_code") or not current.get("bank_account_number"):
+            raise PaymentProviderError(
+                "This tenant must select a bank and save its bank account number before Paystack can create a subaccount.",
+                "Missing tenant bank details",
+                400,
+            )
+        merged = {**tenant, **current}
+        subaccount = create_paystack_subaccount(
+            tenant=merged,
+            percentage_charge=tenant_paystack_platform_fee_percent(),
+        )
+        updates = {
+            "paystack_subaccount_code": subaccount["subaccount_code"],
+            "paystack_settlement_bank": subaccount.get("settlement_bank") or merged.get("bank_code") or "",
+            "paystack_settlement_account_name": subaccount.get("account_name") or "",
+            "paystack_settlement_status": "ready" if subaccount.get("active") else "pending_verification",
+        }
+        tenant_record.apply_data(updates)
+        tenant_record.save()
+        return {**merged, **updates}
 
 
 
@@ -2667,10 +2708,23 @@ def settings_business(request):
         for field in ("bank_code", "bank_account_number")
     )
     merged_for_paystack = {**request.tenant, **updates}
+    platform_default_provider = str((ref("site_settings").get() or {}).get("collection_provider") or "daraja").strip().lower()
     paystack_selected = (
         "paystack" in (merged_for_paystack.get("payment_methods") or [])
         or merged_for_paystack.get("payment_provider") == "paystack"
+        or platform_default_provider == "paystack"
     )
+    existing_subaccount_code = str(merged_for_paystack.get("paystack_subaccount_code") or "").strip()
+    if paystack_selected and existing_subaccount_code and not bank_details_changed:
+        try:
+            existing_subaccount = fetch_paystack_subaccount(existing_subaccount_code)
+            if not existing_subaccount or not existing_subaccount.get("active"):
+                updates["paystack_subaccount_code"] = ""
+                updates["paystack_settlement_account_name"] = ""
+                updates["paystack_settlement_status"] = "not_configured"
+                merged_for_paystack = {**request.tenant, **updates}
+        except PaymentProviderError as exc:
+            return ok({"message": exc.public_message, "settlement_status": "setup_failed"}, exc.status_code)
     if bank_details_changed:
         updates["paystack_subaccount_code"] = ""
         updates["paystack_settlement_account_name"] = ""
@@ -2691,10 +2745,10 @@ def settings_business(request):
         except PaymentProviderError as exc:
             return ok({"message": exc.public_message, "settlement_status": "setup_failed"}, exc.status_code)
         except Exception:
-            logger.exception("Paystack bank account setup failed tenant=%s", tenant_id)
-            return ok({"message": "Could not set up this bank account. Verify the bank code and account number, then try again.", "settlement_status": "setup_failed"}, 502)
+            logger.exception("Unexpected Paystack bank account setup failure tenant=%s", tenant_id)
+            return ok({"message": "Paystack bank account setup failed unexpectedly. Please retry; if it continues, check the server log for the error details.", "settlement_status": "setup_failed"}, 502)
     if updates.get("theme_mode") not in {None, "light", "dark", "system"}:
-        updates["theme_mode"] = "light"
+        updates["theme_mode"] = "dark"
     if "theme_mode" in updates:
         updates["dark_mode"] = updates["theme_mode"] == "dark"
     if "theme_color" in updates and not updates["theme_color"].startswith("#"):
@@ -2721,6 +2775,19 @@ def settings_business(request):
     tenant_record.apply_data(updates)
     tenant_record.save()
     return ok({"success": True, "message": "Business settings saved", "config": tenant_theme_payload({**merged, **updates})})
+
+
+@csrf_exempt
+@api_view(["GET"])
+@tenant_required
+def payment_banks(request):
+    try:
+        return ok({"results": list_paystack_banks("kenya")})
+    except PaymentProviderError as exc:
+        return ok({"message": exc.public_message}, exc.status_code)
+    except Exception:
+        logger.exception("Could not load Kenyan banks for payment settings")
+        return ok({"message": "Could not load the bank list. Try again shortly."}, 502)
 
 
 @csrf_exempt
