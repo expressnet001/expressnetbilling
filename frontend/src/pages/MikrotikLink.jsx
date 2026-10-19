@@ -302,26 +302,6 @@ export default function MikrotikSettings() {
               </button>
             </div>
           </div>
-          {provisioningState?.status === 'completed' && (
-            <div className="mt-3 grid gap-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <p className="text-xs font-semibold uppercase">Router callback</p>
-                <p className="mt-1 font-semibold">Received</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase">Identity</p>
-                <p className="mt-1 font-semibold">{provisioningState.identity || '-'}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase">RouterOS</p>
-                <p className="mt-1 font-semibold">{provisioningState.version || '-'}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase">Seen from</p>
-                <p className="mt-1 font-semibold">{provisioningState.lastSeenIp || '-'}</p>
-              </div>
-            </div>
-          )}
           <div className="mt-3 flex justify-end">
             <button type="button" className="btn-primary" onClick={goToConfiguration} disabled={pullingStatus}>
               {pullingStatus ? 'Pulling live config...' : 'Next'}

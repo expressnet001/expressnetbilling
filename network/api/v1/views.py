@@ -1026,6 +1026,46 @@ def _refresh_captive_daraja_payment(tenant_id, tenant, payment_id, payment):
     return refreshed
 
 
+def _refresh_captive_paystack_payment(tenant_id, tenant, payment_id, payment):
+    if not payment_id or not payment:
+        return payment
+    from management.api.v1.views import activate_paid_access, complete_paystack_payment
+    from management.services.billing import verify_paystack_transaction
+
+    if payment.get("status") != "success":
+        reference = payment.get("paystack_reference")
+        if not reference:
+            return payment
+        try:
+            transaction_data = verify_paystack_transaction(reference)
+            if transaction_data.get("status") == "success":
+                complete_paystack_payment(tenant_id, payment_id, transaction_data)
+        except PaymentProviderError as exc:
+            logger.info("Captive Paystack verification pending tenant=%s payment=%s detail=%s", tenant_id, payment_id, exc.detail)
+        except Exception as exc:
+            logger.warning("Captive Paystack verification failed tenant=%s payment=%s error=%s", tenant_id, payment_id, exc, exc_info=True)
+
+    refreshed = ref(f"tenants/{tenant_id}/payments/{payment_id}").get() or payment
+    access_status = str(refreshed.get("access_status") or "").lower()
+    if refreshed.get("status") == "success" and (
+        not refreshed.get("access_username")
+        or access_status in {"", "pending", "activation_pending", "activation_failed"}
+    ):
+        try:
+            activate_paid_access(
+                tenant,
+                payment_id,
+                refreshed,
+                refreshed.get("phone"),
+                refreshed.get("payment_code") or refreshed.get("paystack_transaction_id") or payment_id,
+            )
+        except Exception as exc:
+            logger.warning("Captive Paystack access activation failed tenant=%s payment=%s error=%s", tenant_id, payment_id, exc, exc_info=True)
+            ref(f"tenants/{tenant_id}/payments/{payment_id}").update({"access_status": "activation_failed", "access_error": str(exc), "updated_at": iso_now()})
+        refreshed = ref(f"tenants/{tenant_id}/payments/{payment_id}").get() or refreshed
+    return refreshed
+
+
 @csrf_exempt
 @api_view(["GET"])
 def captive_portal_page(request, tenant_id):
@@ -1040,7 +1080,10 @@ def captive_portal_page(request, tenant_id):
     if payment_id:
         if payment_id:
             payment = ref(f"tenants/{tenant_id}/payments/{payment_id}").get()
-        payment = _refresh_captive_daraja_payment(tenant_id, {"id": tenant_id, **tenant}, payment_id, payment)
+        if payment and payment.get("provider") == "paystack":
+            payment = _refresh_captive_paystack_payment(tenant_id, {"id": tenant_id, **tenant}, payment_id, payment)
+        else:
+            payment = _refresh_captive_daraja_payment(tenant_id, {"id": tenant_id, **tenant}, payment_id, payment)
         if payment and payment.get("status") == "success":
             router_ip = _router_ip_from_captive_data(request.GET, tenant, payment)
             link_login = sanitize_router_login_url(payment.get("link_login") or request.GET.get("link_login") or request.GET.get("link-login") or "")
@@ -1078,10 +1121,11 @@ def captive_portal_page(request, tenant_id):
         else:
             retry_query = dict(request.GET.items())
             retry_url = f"/api/captive/{html.escape(str(tenant_id))}?{urlencode(retry_query)}" if retry_query else f"/api/captive/{html.escape(str(tenant_id))}"
+            provider_label = "Paystack M-Pesa" if payment and payment.get("provider") == "paystack" else "M-Pesa"
             payment_notice = f"""
               <div class="card connect-card">
                 <div class="spinner" aria-hidden="true"></div>
-                <strong>Waiting for M-Pesa confirmation.</strong>
+                <strong>Waiting for {provider_label} confirmation.</strong>
                 <p class="muted">If you have paid, keep this page open. We will show your username, password, and expiry time once confirmation arrives.</p>
               </div>
               <script>setTimeout(function(){{window.location.href='{retry_url}';}}, 5000);</script>
@@ -1446,12 +1490,7 @@ def captive_portal_pay(request, tenant_id):
         if data.get("ip"):
             back = f"{back}?ip={html.escape(str(data.get('ip')))}"
         return _html_page("Payment unavailable", f"<main><div class='alert'>{html.escape(str(payload.get('message') or payload.get('error') or 'Could not start payment'))}</div><p><a href='{back}'>Back to packages</a></p></main>", response.status_code)
-    authorization_url = payload.get("authorizationUrl")
-    if authorization_url:
-        return redirect(authorization_url)
-    if payload.get("provider") == "paystack":
-        return _html_page("Paystack checkout started", "<main><div class='card connect-card'><strong>Continue your payment in the Paystack checkout.</strong><p class='muted'>Return to this page after payment to connect your device.</p></div></main>", 201)
-    if payload.get("provider") == "mpesa":
+    if payload.get("provider") in {"paystack", "mpesa"}:
         query = {
             "payment_id": payload.get("paymentId"),
             "ip": data.get("ip") or data.get("router_ip") or "",
@@ -1461,17 +1500,19 @@ def captive_portal_pay(request, tenant_id):
             "dst": data.get("dst") or data.get("link-orig") or "",
         }
         refresh_url = f"/api/captive/{html.escape(str(tenant_id))}?{urlencode({key: value for key, value in query.items() if value})}"
+        message = payload.get("message") or "Check your phone and enter your M-Pesa PIN to complete payment."
+        provider_label = "Paystack M-Pesa" if payload.get("provider") == "paystack" else "M-Pesa"
         return _html_page(
             "Confirm payment",
             f"""
             <main>
               <div class="card connect-card">
                 <div class="spinner" aria-hidden="true"></div>
-                <strong>{html.escape(str(payload.get('message') or 'Check your phone and enter your M-Pesa PIN to complete payment.'))}</strong>
-                <p class="muted">Waiting for payment confirmation. Once it succeeds, your username, password, and expiry time will appear here before we connect you.</p>
+                <strong>{html.escape(str(message))}</strong>
+                <p class="muted">Waiting for {provider_label} to confirm your payment. This page will connect your device when payment is confirmed.</p>
                 <p><a class="buy-btn" href="{refresh_url}">I have paid</a></p>
               </div>
-              <script>setTimeout(function(){{window.location.href='{refresh_url}';}}, 8000);</script>
+              <script>setTimeout(function(){{window.location.replace('{refresh_url}');}}, 5000);</script>
             </main>
             """,
             201,

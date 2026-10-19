@@ -94,8 +94,29 @@ def initiate_paystack_mpesa_stk(*, email, amount, phone, reference, currency="KE
         charge_percent = tenant_paystack_platform_fee_percent()
         if charge_percent:
             payload["transaction_charge"] = int((Decimal(str(amount)) * Decimal("100") * Decimal(str(charge_percent)) / Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    response = requests.post(f"{PAYSTACK_API_BASE}/charge", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json=payload, timeout=30)
-    response.raise_for_status()
+    try:
+        response = requests.post(f"{PAYSTACK_API_BASE}/charge", headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}, json=payload, timeout=30)
+    except requests.RequestException as exc:
+        raise PaymentProviderError(
+            "We could not confirm the payment prompt response yet. Do not start another payment; this page will check the transaction status.",
+            f"Paystack charge outcome is uncertain: {type(exc).__name__}",
+            202,
+        ) from exc
+    if response.status_code >= 500:
+        raise PaymentProviderError(
+            "We could not confirm the payment prompt response yet. Do not start another payment; this page will check the transaction status.",
+            f"Paystack charge returned HTTP {response.status_code}; outcome is uncertain",
+            202,
+        )
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        try:
+            error_payload = response.json()
+        except (ValueError, json.JSONDecodeError):
+            error_payload = {}
+        message = str(error_payload.get("message") or "Paystack could not start the M-Pesa prompt")
+        raise PaymentProviderError(message, f"Paystack charge HTTP {response.status_code}", response.status_code if 400 <= response.status_code < 500 else 502) from exc
     result = response.json()
     charge = result.get("data") or {}
     if result.get("status") is not True or not charge.get("reference"):

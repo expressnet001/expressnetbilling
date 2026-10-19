@@ -886,6 +886,10 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
         "tenant_id": str(tenant_id),
         "paystack_reference": reference,
     })
+    access_token = make_payment_access_token(tenant_id, payment_ref.key)
+    payment_ref.update({"access_verify_token": access_token})
+    _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
+    charge_attempted = False
     try:
         email = str(data.get("email") or (customer or {}).get("email") or tenant.get("payment_customer_email") or tenant.get("support_email") or tenant.get("email") or "").strip()
         if "@" not in email:
@@ -893,26 +897,35 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
             # asks the customer for their phone number.
             email_hash = hashlib.sha256(reference.encode("utf-8")).hexdigest()[:20]
             email = f"checkout-{email_hash}@payments.invalid"
+        tenant = _ensure_tenant_paystack_subaccount(tenant_id, tenant)
         subaccount = str(tenant.get("paystack_subaccount_code") or "").strip()
         if not subaccount or tenant.get("paystack_settlement_status") != "ready":
-            tenant = _ensure_tenant_paystack_subaccount(tenant_id, tenant)
-            subaccount = str(tenant.get("paystack_subaccount_code") or "").strip()
-        if not subaccount or tenant.get("paystack_settlement_status") != "ready":
+            if tenant.get("paystack_settlement_status") == "pending_verification":
+                raise PaymentProviderError("This tenant's Paystack subaccount must be verified in the Paystack Dashboard before payments can be accepted. Paystack holds the first payout until verification.", "Paystack subaccount requires verification", 400)
             raise PaymentProviderError("Bank account setup is not complete for this tenant. The tenant must save a valid bank account before Paystack payments can be accepted.", "Bank account not ready", 400)
         metadata = {"kind": "internet_payment", "tenant_id": str(tenant_id), "payment_id": str(payment_ref.key)}
+        charge_attempted = True
         charge = initiate_paystack_mpesa_stk(email=email, amount=amount_payable, phone=phone, reference=reference, currency=currency, subaccount=subaccount, bearer=tenant.get("paystack_bearer") or "account", metadata=metadata)
         payment_ref.update({"paystack_reference": charge.get("reference") or reference, "paystack_charge_status": charge.get("status") or "", "paystack_display_text": charge.get("display_text") or "", "collection_account": "tenant_paystack", "tenant_settlement_status": "paystack_subaccount", "tenant_paystack_subaccount_code": subaccount, "payment_method": "paystack_mpesa_stk", "customer_message": charge.get("display_text") or "Approve the M-Pesa prompt on your phone to complete payment."})
         _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
-        access_token = make_payment_access_token(tenant_id, payment_ref.key)
-        payment_ref.update({"access_verify_token": access_token})
         return ok({"success": True, "message": charge.get("display_text") or "Approve the M-Pesa payment prompt on your phone.", "paymentId": payment_ref.key, "verifyToken": access_token, "provider": "paystack", "paymentMethod": "mpesa_stk", "reference": charge.get("reference") or reference}, 201)
     except PaymentProviderError as exc:
+        if exc.status_code == 202:
+            payment_ref.update({"paystack_charge_status": "initiation_unknown", "customer_message": exc.public_message})
+            _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
+            return ok({"success": True, "status": "pending", "message": exc.public_message, "paymentId": payment_ref.key, "verifyToken": access_token, "provider": "paystack", "paymentMethod": "mpesa_stk", "reference": reference}, 202)
         payment_ref.update({"status": "failed", "failed_at": iso_now(), "callback_result_desc": exc.detail})
+        _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
         return ok({"success": False, "message": exc.public_message, "paymentId": payment_ref.key}, exc.status_code)
     except Exception as exc:
         logger.exception("Paystack M-Pesa STK initialization failed tenant=%s payment=%s", tenant_id, payment_ref.key)
-        payment_ref.update({"status": "failed", "failed_at": iso_now(), "callback_result_desc": str(exc)})
-        return ok({"success": False, "message": "Paystack checkout could not be started. Please try again.", "paymentId": payment_ref.key}, 502)
+        if not charge_attempted:
+            payment_ref.update({"status": "failed", "failed_at": iso_now(), "callback_result_desc": str(exc)})
+            _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
+            return ok({"success": False, "message": "M-Pesa payment could not be started. Please try again.", "paymentId": payment_ref.key}, 502)
+        payment_ref.update({"paystack_charge_status": "initiation_unknown", "customer_message": "Payment prompt status is being checked. Do not start another payment yet."})
+        _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
+        return ok({"success": True, "status": "pending", "message": payment_ref.get().get("customer_message"), "paymentId": payment_ref.key, "verifyToken": access_token, "provider": "paystack", "paymentMethod": "mpesa_stk", "reference": reference}, 202)
 
 
 def _ensure_tenant_paystack_subaccount(tenant_id, tenant):
@@ -921,10 +934,19 @@ def _ensure_tenant_paystack_subaccount(tenant_id, tenant):
         tenant_record = Tenant.objects.select_for_update().get(pk=tenant_id)
         current = tenant_record.as_dict()
         existing_code = str(current.get("paystack_subaccount_code") or "").strip()
-        if existing_code and current.get("paystack_settlement_status") == "ready":
+        if existing_code:
             existing = fetch_paystack_subaccount(existing_code)
             if existing and existing.get("active"):
-                return {**tenant, **current}
+                status = "ready" if existing.get("is_verified") else "pending_verification"
+                updates = {
+                    "paystack_settlement_status": status,
+                    "paystack_settlement_bank": existing.get("settlement_bank") or current.get("paystack_settlement_bank") or current.get("bank_code") or "",
+                    "paystack_settlement_account_name": existing.get("account_name") or current.get("paystack_settlement_account_name") or "",
+                }
+                if any(current.get(key) != value for key, value in updates.items()):
+                    tenant_record.apply_data(updates)
+                    tenant_record.save()
+                return {**tenant, **current, **updates}
             # The provider-side account was removed or deactivated. Clear the
             # stale local code so the normal creation flow can make a fresh one.
             current["paystack_subaccount_code"] = ""
@@ -944,7 +966,7 @@ def _ensure_tenant_paystack_subaccount(tenant_id, tenant):
             "paystack_subaccount_code": subaccount["subaccount_code"],
             "paystack_settlement_bank": subaccount.get("settlement_bank") or merged.get("bank_code") or "",
             "paystack_settlement_account_name": subaccount.get("account_name") or "",
-            "paystack_settlement_status": "ready" if subaccount.get("active") else "pending_verification",
+            "paystack_settlement_status": "ready" if subaccount.get("active") and subaccount.get("is_verified") else ("pending_verification" if subaccount.get("active") else "pending"),
         }
         tenant_record.apply_data(updates)
         tenant_record.save()
@@ -2615,7 +2637,24 @@ def request_payment_change_code(request):
 def settings_business(request):
     tenant_id = request.tenant["id"]
     if method(request, "GET"):
-        return ok(tenant_theme_payload(request.tenant))
+        tenant = dict(request.tenant)
+        subaccount_code = str(tenant.get("paystack_subaccount_code") or "").strip()
+        if subaccount_code:
+            try:
+                subaccount = fetch_paystack_subaccount(subaccount_code)
+                if subaccount and subaccount.get("active"):
+                    status = "ready" if subaccount.get("is_verified") else "pending_verification"
+                    if tenant.get("paystack_settlement_status") != status:
+                        tenant["paystack_settlement_status"] = status
+                        tenant_record = Tenant.objects.filter(pk=tenant_id).first()
+                        if tenant_record:
+                            tenant_record.apply_data({"paystack_settlement_status": status})
+                            tenant_record.save()
+                elif subaccount is None:
+                    tenant["paystack_settlement_status"] = "not_configured"
+            except PaymentProviderError as exc:
+                logger.info("Could not refresh Paystack subaccount status tenant=%s detail=%s", tenant_id, exc.detail)
+        return ok(tenant_theme_payload(tenant))
 
     data = body(request)
     allowed = [
@@ -2723,6 +2762,8 @@ def settings_business(request):
                 updates["paystack_settlement_account_name"] = ""
                 updates["paystack_settlement_status"] = "not_configured"
                 merged_for_paystack = {**request.tenant, **updates}
+            else:
+                updates["paystack_settlement_status"] = "ready" if existing_subaccount.get("is_verified") else "pending_verification"
         except PaymentProviderError as exc:
             return ok({"message": exc.public_message, "settlement_status": "setup_failed"}, exc.status_code)
     if bank_details_changed:
@@ -2741,7 +2782,7 @@ def settings_business(request):
             updates["paystack_subaccount_code"] = subaccount["subaccount_code"]
             updates["paystack_settlement_bank"] = subaccount.get("settlement_bank") or merged_for_paystack.get("bank_code") or ""
             updates["paystack_settlement_account_name"] = subaccount.get("account_name") or ""
-            updates["paystack_settlement_status"] = "ready" if subaccount.get("active") else "pending_verification"
+            updates["paystack_settlement_status"] = "ready" if subaccount.get("active") and subaccount.get("is_verified") else ("pending_verification" if subaccount.get("active") else "pending")
         except PaymentProviderError as exc:
             return ok({"message": exc.public_message, "settlement_status": "setup_failed"}, exc.status_code)
         except Exception:
@@ -2764,7 +2805,13 @@ def settings_business(request):
             and bool(merged.get("bank_code") and merged.get("bank_account_number"))
             and merged.get("paystack_settlement_status") == "ready"
         )
-    ) else "missing_payout_details"
+    ) else (
+        "pending_verification"
+        if "paystack" in (merged.get("payment_methods") or [])
+        and bool(merged.get("bank_code") and merged.get("bank_account_number"))
+        and merged.get("paystack_settlement_status") == "pending_verification"
+        else "missing_payout_details"
+    )
 
     merged = {**request.tenant, **updates}
     if not ("paystack_settlement_status" in updates and updates["paystack_settlement_status"] == "not_configured"):
