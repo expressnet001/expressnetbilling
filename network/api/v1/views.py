@@ -1476,12 +1476,12 @@ def captive_hotspot_file(request, tenant_id, page):
 def captive_portal_pay(request, tenant_id):
     data = body(request)
     try:
-        response = _public_pay_impl(getattr(request, "_request", request), tenant_id)
+        response = _public_pay_impl(getattr(request, "_request", request), tenant_id, data=data)
     except Exception as exc:
         logger.exception("Captive portal payment failed before provider response tenant=%s error=%s", tenant_id, exc)
         return _html_page(
             "Payment unavailable",
-            "<main><div class='alert'>M-Pesa payment could not be started. Please confirm the phone number and try again. If it continues, contact the provider.</div></main>",
+            "<main><div class='alert'>Payment could not be started. Please try again. If the issue continues, contact the provider.</div></main>",
             503,
         )
     payload = getattr(response, "data", {}) or {}
@@ -1558,8 +1558,8 @@ def _paid_access_html(title, payload, login_action="", auto_submit=True):
 
 @csrf_exempt
 @api_view(["POST"])
-def _public_pay_impl(request, tenant_id):
-    data = body(request)
+def _public_pay_impl(request, tenant_id, data=None):
+    data = body(request) if data is None else data
     if not data.get("package_id") or not data.get("phone"):
         return ok({"message": "Package and phone number are required"}, 400)
     tenant_data = ref(f"tenants/{tenant_id}").get()
