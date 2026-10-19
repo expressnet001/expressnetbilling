@@ -677,12 +677,13 @@ def public_tenant(request, tenant_id):
         return ok({"message": "Tenant not found"}, 404)
     payment_methods = tenant.get("payment_methods") if isinstance(tenant.get("payment_methods"), list) else []
     platform_collection_provider = str((ref("site_settings").get() or {}).get("collection_provider") or "daraja")
+    effective_collection_provider = selected_collection_provider(tenant, platform_default=platform_collection_provider)
     public_payment_methods = [
         str(method).strip().lower()
         for method in payment_methods
         if str(method).strip().lower() in {"daraja_paybill", "daraja_buygoods", "paystack"}
     ] or [selected_daraja_method(tenant)]
-    if platform_collection_provider == "paystack" and "paystack" not in public_payment_methods:
+    if effective_collection_provider == "paystack" and "paystack" not in public_payment_methods:
         public_payment_methods = ["paystack"]
     return ok({
         "id": tenant_id,
@@ -691,7 +692,7 @@ def public_tenant(request, tenant_id):
         "status": tenant.get("status"),
         "logo_url": tenant.get("logo_url") or "",
         "payment_methods": public_payment_methods,
-        "collection_provider": platform_collection_provider,
+        "collection_provider": effective_collection_provider,
     })
 
 
@@ -775,9 +776,11 @@ def _public_pay_impl(request, tenant_id):
             return ok({"message": "Enter a valid TV MAC address"}, 400)
     access_username = mac_address if service_type == "tv" else ((customer or {}).get("username") or username or to_access_username(phone))
     pending_access_password = str((customer or {}).get("password") or secrets.token_hex(3).upper())
-    requested_provider = str(data.get("provider") or data.get("payment_provider") or (ref("site_settings").get() or {}).get("collection_provider") or "daraja").strip().lower()
-    if requested_provider not in {"daraja", "mpesa", "paystack"}:
-        return ok({"message": "Unsupported payment provider"}, 400)
+    requested_provider = selected_collection_provider(
+        tenant,
+        data.get("provider") or data.get("payment_provider"),
+        (ref("site_settings").get() or {}).get("collection_provider"),
+    )
     if requested_provider == "paystack":
         return _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_type, customer, access_username, pending_access_password, mac_address, router_ip, router_client_ip, router_client_mac, router_mac, link_login, dst, amount_payable)
     daraja_method = selected_daraja_method(tenant, data.get("payment_method"))
@@ -1917,6 +1920,33 @@ def payments(request):
     if method(request, "GET"):
         ensure_expired_customer_invoices(request.tenant)
         payments_data = list_children(f"tenants/{request.tenant['id']}/payments")
+        paystack_refs = {
+            str(item.get("paystack_reference") or ""): item
+            for item in payments_data
+            if item.get("provider") == "paystack" and item.get("paystack_reference")
+        }
+        sql_paystack_payments = Payment.objects.filter(
+            tenant_id=request.tenant["id"], provider="paystack"
+        ).order_by("-id")
+        for sql_payment in sql_paystack_payments:
+            sql_item = sql_payment.as_dict()
+            reference = str(sql_item.get("paystack_reference") or "")
+            ref_item = paystack_refs.get(reference)
+            if ref_item is None:
+                payments_data.append(sql_item)
+                if reference:
+                    paystack_refs[reference] = sql_item
+                continue
+            for field in (
+                "customer_name", "package_name", "service_type", "amount", "payment_code",
+                "currency", "phone", "paid_at", "initiated_at", "access_username",
+                "access_password", "access_expires_at", "access_status",
+            ):
+                if ref_item.get(field) in (None, "") and sql_item.get(field) not in (None, ""):
+                    ref_item[field] = sql_item[field]
+            if sql_item.get("status") == "success":
+                ref_item["status"] = "success"
+                ref_item["paid_at"] = sql_item.get("paid_at") or ref_item.get("paid_at")
         status_filter = request.GET.get("status")
         from_date = parse_date(request.GET.get("from"))
         to_date = parse_date(request.GET.get("to"))

@@ -271,6 +271,26 @@ def normalize_phone(phone):
     return digits
 
 
+def selected_collection_provider(tenant=None, requested_provider=None, platform_default=None):
+    tenant = tenant or {}
+    requested = str(requested_provider or "").strip().lower()
+    if requested in {"paystack", "daraja", "mpesa"}:
+        return "paystack" if requested == "paystack" else "daraja"
+
+    methods = tenant.get("payment_methods") if isinstance(tenant.get("payment_methods"), list) else []
+    normalized_methods = {str(item or "").strip().lower() for item in methods}
+    has_daraja = bool(normalized_methods & {"daraja_paybill", "daraja_buygoods", "paybill", "buygoods"})
+    if "paystack" in normalized_methods and not has_daraja:
+        return "paystack"
+
+    tenant_provider = str(tenant.get("payment_provider") or "").strip().lower()
+    if tenant_provider in {"paystack", "daraja", "mpesa"}:
+        return "paystack" if tenant_provider == "paystack" else "daraja"
+
+    default = str(platform_default or "daraja").strip().lower()
+    return "paystack" if default == "paystack" else "daraja"
+
+
 def normalize_public_url(value):
     value = str(value or "").strip().strip("\"'").rstrip("/")
     while value.startswith("http://https://"):
