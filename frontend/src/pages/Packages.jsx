@@ -581,7 +581,14 @@ export default function Packages() {
               ) : filteredPackages.length === 0 ? (
                 <tr><td className="table-cell text-slate-500" colSpan="10">No packages found.</td></tr>
               ) : pagedPackages.map((pkg, index) => (
-                <tr key={pkg.id} className={index % 2 === 0 ? 'bg-white text-slate-700' : 'bg-slate-50/70 text-slate-700'}>
+                <tr
+                  key={pkg.id}
+                  className="transition-colors hover:bg-[var(--app-accent-muted)]"
+                  style={{
+                    backgroundColor: index % 2 === 0 ? 'var(--app-panel)' : 'var(--app-panel-muted)',
+                    color: 'var(--app-text)',
+                  }}
+                >
                   <td className="table-cell px-3 py-2.5 font-normal text-slate-800">{pkg.name}</td>
                   <td className="table-cell px-3 py-2.5">
                     <span className={neutralBadgeClass}>

@@ -122,7 +122,7 @@ export default function Sidebar({ open, onClose }) {
 
   const navClass = ({ isActive }) =>
     [
-      'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[12px] font-light transition',
+      'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[12px] font-extralight transition',
       isActive
         ? 'bg-[var(--sidebar-active)] text-white shadow-[inset_3px_0_0_rgba(255,255,255,0.28)]'
         : 'text-white/88 hover:bg-white/10 hover:text-white',
@@ -183,7 +183,7 @@ export default function Sidebar({ open, onClose }) {
               <div key={section.title} className="border-t border-white/10 pt-2 first:border-t-0 first:pt-0">
                 <button
                   type="button"
-                  className={`flex h-7 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[12px] font-light transition hover:bg-white/10 ${groupActive ? 'text-white' : 'text-white/84'}`}
+                  className={`flex h-7 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[12px] font-extralight transition hover:bg-white/10 ${groupActive ? 'text-white' : 'text-white/84'}`}
                   onClick={() => toggleSection(section.title)}
                   aria-expanded={expanded}
                 >
@@ -198,7 +198,7 @@ export default function Sidebar({ open, onClose }) {
                         key={`${section.title}-${label}-${to}`}
                         to={to}
                         className={({ isActive }) => [
-                          'ml-6 flex h-7 items-center gap-2 rounded-md px-2 text-[12px] font-light transition',
+                          'ml-6 flex h-7 items-center gap-2 rounded-md px-2 text-[12px] font-extralight transition',
                           isActive ? 'bg-[var(--sidebar-active)] text-white' : 'text-white/84 hover:bg-white/10 hover:text-white',
                         ].join(' ')}
                         onClick={onClose}

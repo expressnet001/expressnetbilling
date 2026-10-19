@@ -715,7 +715,7 @@ export default function Customers({ initialFilter = 'all', serviceLocked = null,
                  {mikrotikRouterMap[customer.mikrotik_router_id]?.label || customer.mikrotik_router_id || '-'}
                 </td>
                 <td>{customer.provisioning_status || 'pending'}</td>
-                <td className={`table-cell px-3 ${expiryClass(customer.expiry_date)}`}>{formatDate(customer.expiry_date)}</td>
+                <td className={`table-cell px-3 ${expiryClass(customer.expiry_date)}`}>{isHotspotOnlyPage ? formatLocalDateTime(customer.expiry_date) : formatDate(customer.expiry_date)}</td>
                 <td className="table-cell px-3"><StatusBadge status={customer.status} /></td>
                 <td className="table-cell px-3">
                   <button
