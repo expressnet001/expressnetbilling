@@ -775,7 +775,11 @@ def react_app(request):
     index = Path(settings.BASE_DIR) / "frontend" / "dist" / "index.html"
     if not index.exists():
         raise Http404("Build the React app first with npm --prefix frontend run build")
-    return FileResponse(index.open("rb"), content_type="text/html")
+    response = FileResponse(index.open("rb"), content_type="text/html")
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
 
 
 def react_asset(request, asset_path):
