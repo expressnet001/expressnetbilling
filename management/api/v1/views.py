@@ -1025,6 +1025,22 @@ def public_verify(request, tenant_id):
     if context_updates:
         ref(f"tenants/{tenant_id}/payments/{payment_id}").update(context_updates)
         payment.update(context_updates)
+    if payment.get("status") == "success" and str(payment.get("access_status") or "").lower() == "queued":
+        synced_customer = Customer.objects.filter(
+            tenant_id=tenant_id,
+            username__iexact=str(payment.get("access_username") or payment.get("username") or "").strip(),
+            status__iexact="active",
+            provisioning_status__iexact="provisioned",
+        ).first()
+        if synced_customer:
+            access_updates = {"access_status": "active", "access_error": None}
+            ref(f"tenants/{tenant_id}/payments/{payment_id}").update(access_updates)
+            payment.update(access_updates)
+            sql_payment = Payment.objects.filter(tenant_id=tenant_id, pk=_numeric_pk(payment_id)).first()
+            if sql_payment:
+                sql_payment.access_status = "active"
+                sql_payment.extra = {**(sql_payment.extra or {}), "access_error": None}
+                sql_payment.save(update_fields=["access_status", "extra"])
     if payment.get("status") != "success" and payment.get("provider") == "paystack":
         reference = payment.get("paystack_reference")
         if reference:
@@ -1069,7 +1085,8 @@ def public_verify(request, tenant_id):
         if payment.get("status") != "success":
             return ok({"success": False, "status": payment.get("status") or "pending", "message": "Waiting for M-Pesa confirmation."}, 202)
     radius_customer_ready = True
-    if payment.get("status") == "success" and payment.get("access_username"):
+    tenant_for_access = ref(f"tenants/{tenant_id}").get() or {}
+    if tenant_for_access.get("radius_enabled") and payment.get("status") == "success" and payment.get("access_username"):
         radius_customer_ready = Customer.objects.filter(
             tenant_id=tenant_id,
             username__iexact=str(payment.get("access_username") or "").strip(),
@@ -3771,13 +3788,23 @@ def activate_paid_access(tenant, payment_id, payment, phone, payment_code):
             router_access_status = "active"
         except Exception as exc:
             if _router_is_agent_linked(tenant):
-                _queue_router_command_for_tenant(tenant_id, {"type": "sync_secrets", "script": _customer_secret_script(access_payload)})
+                _queue_router_command_for_tenant(tenant_id, {
+                    "type": "sync_secrets",
+                    "script": _customer_secret_script(access_payload),
+                    "customer_ids": [customer_id],
+                    "payment_ids": [payment_id],
+                })
                 router_access_status = "queued"
                 router_access_error = str(exc)
             else:
                 raise
     elif _router_is_agent_linked(tenant):
-        _queue_router_command_for_tenant(tenant_id, {"type": "sync_secrets", "script": _customer_secret_script(access_payload)})
+        _queue_router_command_for_tenant(tenant_id, {
+            "type": "sync_secrets",
+            "script": _customer_secret_script(access_payload),
+            "customer_ids": [customer_id],
+            "payment_ids": [payment_id],
+        })
         router_access_status = "queued"
     elif tenant.get("radius_enabled") and service_type in {"hotspot", "pppoe"}:
         router_access_status = "radius_ready"

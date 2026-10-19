@@ -4220,12 +4220,21 @@ def router_agent_ack(request, token, command_id):
                     "ppp_profile_error": None,
                 })
         if (applied_command or {}).get("type") == "sync_secrets":
-            for customer_id_value in ((applied_command or {}).get("customer_ids") or []):
+            customer_ids = [str(value) for value in ((applied_command or {}).get("customer_ids") or [])]
+            payment_ids = [str(value) for value in ((applied_command or {}).get("payment_ids") or [])]
+            for customer_id_value in customer_ids:
                 ref(f"tenants/{tenant_id}/customers/{customer_id_value}").update({
                     "provisioning_status": "provisioned",
                     "provisioning_message": "Customer access synced on MikroTik",
                     "provisioned_at": iso_now(),
                 })
+            for payment_id_value in payment_ids:
+                ref(f"tenants/{tenant_id}/payments/{payment_id_value}").update({
+                    "access_status": "active",
+                    "access_error": None,
+                })
+            if payment_ids:
+                Payment.objects.filter(tenant_id=tenant_id, pk__in=payment_ids).update(access_status="active")
         if (applied_command or {}).get("type") == "suspend_router":
             ref(f"tenants/{tenant_id}").update({"mikrotik_router_suspended": True})
             _update_linked_router(tenant_id, {**tenant, "mikrotik_router_suspended": True, "mikrotik_last_seen_at": iso_now()}, status="suspended")
