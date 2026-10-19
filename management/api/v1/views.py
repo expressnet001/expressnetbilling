@@ -1947,6 +1947,28 @@ def payments(request):
             if sql_item.get("status") == "success":
                 ref_item["status"] = "success"
                 ref_item["paid_at"] = sql_item.get("paid_at") or ref_item.get("paid_at")
+        sql_other_payments = Payment.objects.filter(tenant_id=request.tenant["id"]).exclude(provider="paystack").order_by("-id")
+        known_ids = {str(item.get("id") or "") for item in payments_data}
+        for sql_payment in sql_other_payments:
+            sql_item = sql_payment.as_dict()
+            ref_item = next((item for item in payments_data if str(item.get("id") or "") == str(sql_payment.pk)), None)
+            if ref_item is None:
+                payments_data.append(sql_item)
+                known_ids.add(str(sql_payment.pk))
+                continue
+            for field in ("customer_name", "package_name", "service_type", "amount", "payment_code", "currency", "phone", "paid_at", "initiated_at", "access_username", "access_password", "access_expires_at", "access_status"):
+                if ref_item.get(field) in (None, "") and sql_item.get(field) not in (None, ""):
+                    ref_item[field] = sql_item[field]
+            if sql_item.get("status") == "success":
+                ref_item["status"] = "success"
+                ref_item["paid_at"] = sql_item.get("paid_at") or ref_item.get("paid_at")
+            for field, value in (sql_item.get("extra") or {}).items():
+                ref_item.setdefault(field, value)
+
+        # Return persisted SQL records only when the reference ledger contains
+        # no payment for this tenant (the payment row remains authoritative).
+        if not payments_data:
+            payments_data = [item.as_dict() for item in Payment.objects.filter(tenant_id=request.tenant["id"]).order_by("-id")]
         status_filter = request.GET.get("status")
         from_date = parse_date(request.GET.get("from"))
         to_date = parse_date(request.GET.get("to"))
@@ -3229,6 +3251,7 @@ def _upsert_sql_paystack_payment(tenant_id, payment_id, payment_data):
             "access_password": payment_data.get("access_password"),
             "access_expires_at": payment_data.get("access_expires_at"),
             "access_status": payment_data.get("access_status"),
+            "customer_id": payment_data.get("customer_id"),
         }
         for field, value in fields.items():
             setattr(sql_payment, field, value)

@@ -102,8 +102,8 @@ def tenant_required(view):
         try:
             cache_key = f"tenant_auth:{tenant_id}"
             cached_tenant = cache.get(cache_key)
-        except Exception:
-            logger.warning("Tenant auth cache lookup unavailable tenant=%s", tenant_id, exc_info=True)
+        except Exception as exc:
+            logger.warning("Tenant auth cache lookup unavailable tenant=%s error=%s", tenant_id, exc.__class__.__name__)
             cached_tenant = None
 
         try:
@@ -130,8 +130,8 @@ def tenant_required(view):
                     )
                 try:
                     cache.set(cache_key, tenant_data, timeout=max(1, int(getattr(settings, "TENANT_AUTH_CACHE_SECONDS", 5))))
-                except Exception:
-                    logger.warning("Tenant auth cache storage unavailable tenant=%s", tenant_id, exc_info=True)
+                except Exception as exc:
+                    logger.warning("Tenant auth cache storage unavailable tenant=%s error=%s", tenant_id, exc.__class__.__name__)
             normalized_path = _normalized_api_path(request)
             tenant_status = tenant_data.get("status")
             if tenant_status != "active":
