@@ -13,13 +13,14 @@ function safeRouterLoginUrl(linkLogin = '') {
   try {
     const url = new URL(linkLogin);
     const host = url.hostname;
-    const privateHost = (
+    const privateIp = (
       host === 'localhost' ||
       host.startsWith('10.') ||
       host.startsWith('192.168.') ||
       /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
     );
-    if (!['http:', 'https:'].includes(url.protocol) || !privateHost || (url.pathname && !url.pathname.endsWith('/login'))) return '';
+    const privateHostname = host === 'router' || host === 'mikrotik' || host === 'hotspot' || host.endsWith('.lan') || host.endsWith('.local');
+    if (!['http:', 'https:'].includes(url.protocol) || (!privateIp && !privateHostname) || (url.pathname && !url.pathname.endsWith('/login'))) return '';
     return url.toString();
   } catch {
     return '';
@@ -34,7 +35,8 @@ function safeRouterIp(routerIp = '') {
     host.startsWith('192.168.') ||
     /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
   );
-  return privateHost ? host : '';
+  const privateHostname = /^(?=.{1,253}$)(?:router|mikrotik|hotspot|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:lan|local))$/i.test(host);
+  return privateHost || privateHostname ? host : '';
 }
 
 function submitRouterLogin(routerIp, username, password, linkLogin = '', dst = '') {
@@ -170,7 +172,16 @@ export default function CustomerPortal() {
     async function verify() {
       setVerifying(true);
       try {
-        const verifyQuery = returnedPaymentId ? `payment_id=${encodeURIComponent(returnedPaymentId)}&verify_token=${encodeURIComponent(params.get('verify_token') || params.get('verifyToken') || '')}` : `reference=${encodeURIComponent(reference)}`;
+        const routerParams = new URLSearchParams();
+        if (routerIp) routerParams.set('router_ip', routerIp);
+        if (clientIp) routerParams.set('ip', clientIp);
+        if (routerMac) routerParams.set('mac', routerMac);
+        if (linkLogin) routerParams.set('link_login', linkLogin);
+        if (dst) routerParams.set('dst', dst);
+        const contextQuery = routerParams.toString();
+        const verifyQuery = returnedPaymentId
+          ? `payment_id=${encodeURIComponent(returnedPaymentId)}&verify_token=${encodeURIComponent(params.get('verify_token') || params.get('verifyToken') || '')}${contextQuery ? `&${contextQuery}` : ''}`
+          : `reference=${encodeURIComponent(reference)}${contextQuery ? `&${contextQuery}` : ''}`;
         const { data } = await publicApi.get(`/public/${tenantId}/verify?${verifyQuery}`);
         setVerification(data);
         if (data.success) {
@@ -181,6 +192,7 @@ export default function CustomerPortal() {
           // customer to read credentials off the screen and type them in.
           const loginIp = routerIp || data.router_ip;
           if (submitRouterLogin(loginIp, data.username, data.password, linkLogin || data.link_login, dst || data.dst)) return;
+          setVerification({ ...data, message: 'Payment is confirmed. Use the access credentials below on the MikroTik login page to connect.' });
         }
       } catch (err) {
         setVerification({ success: false, message: err.response?.data?.message || 'Payment verification failed. Please contact your ISP.' });
@@ -204,13 +216,21 @@ export default function CustomerPortal() {
       attempts += 1;
       setVerifying(true);
       try {
-        const { data } = await publicApi.get(`/public/${tenantId}/verify?payment_id=${encodeURIComponent(pendingPayment.id)}&verify_token=${encodeURIComponent(pendingPayment.verifyToken || '')}`);
+        const routerParams = new URLSearchParams();
+        if (routerContext.routerIp) routerParams.set('router_ip', routerContext.routerIp);
+        if (routerContext.clientIp) routerParams.set('ip', routerContext.clientIp);
+        if (routerContext.mac) routerParams.set('mac', routerContext.mac);
+        if (routerContext.linkLogin) routerParams.set('link_login', routerContext.linkLogin);
+        if (routerContext.dst) routerParams.set('dst', routerContext.dst);
+        const contextQuery = routerParams.toString();
+        const { data } = await publicApi.get(`/public/${tenantId}/verify?payment_id=${encodeURIComponent(pendingPayment.id)}&verify_token=${encodeURIComponent(pendingPayment.verifyToken || '')}${contextQuery ? `&${contextQuery}` : ''}`);
         if (stopped) return;
         setVerification(data);
         if (data.success) {
           setPendingPayment(null);
           toast.success('Payment verified');
-          submitRouterLogin(routerContext.routerIp || data.router_ip, data.username, data.password, routerContext.linkLogin || data.link_login, routerContext.dst || data.dst);
+          const submitted = submitRouterLogin(routerContext.routerIp || data.router_ip, data.username, data.password, routerContext.linkLogin || data.link_login, routerContext.dst || data.dst);
+          if (!submitted) setVerification({ ...data, message: 'Payment is confirmed. Use the access credentials below on the MikroTik login page to connect.' });
         } else if (attempts >= 18) {
           setPendingPayment(null);
         }

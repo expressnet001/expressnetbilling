@@ -1133,10 +1133,29 @@ def captive_portal_page(request, tenant_id):
             """
 
     packages = sorted(_captive_packages(tenant_id), key=lambda item: float(item.get("price") or 0))
+    router_ip_context = request.GET.get("router_ip") or request.GET.get("server-address") or ""
+    hidden_js = json.dumps([
+        {"name": key, "value": str(value)}
+        for key, value in [
+            ("ip", request.GET.get("ip")),
+            ("mac", request.GET.get("mac")),
+            ("router_ip", router_ip_context),
+            ("link_login", request.GET.get("link_login") or request.GET.get("link-login")),
+            ("dst", request.GET.get("dst") or request.GET.get("link-orig")),
+        ]
+        if value
+    ]).replace("</", "<\\/")
     hidden = "".join(
-        f"<input type='hidden' name='{html.escape(key)}' value='{html.escape(str(request.GET.get(key) or ''))}'>"
-        for key in ["ip", "mac", "router_ip", "link_login", "link-orig", "dst", "error"]
-        if request.GET.get(key)
+        f"<input type='hidden' name='{html.escape(key)}' value='{html.escape(str(value), quote=True)}'>"
+        for key, value in [
+            ("ip", request.GET.get("ip")),
+            ("mac", request.GET.get("mac")),
+            ("router_ip", router_ip_context),
+            ("link_login", request.GET.get("link_login") or request.GET.get("link-login")),
+            ("dst", request.GET.get("dst") or request.GET.get("link-orig")),
+            ("error", request.GET.get("error")),
+        ]
+        if value
     )
     selected_payment_method = selected_daraja_method(tenant)
     tv_packages = [pkg for pkg in packages if pkg.get("service_type") == "hotspot"]
@@ -1496,7 +1515,7 @@ def captive_portal_pay(request, tenant_id):
             "payment_id": payload.get("paymentId"),
             "ip": data.get("ip") or data.get("router_ip") or "",
             "mac": data.get("mac") or data.get("router_mac") or "",
-            "router_ip": data.get("router_ip") or data.get("ip") or "",
+            "router_ip": data.get("router_ip") or data.get("server-address") or "",
             "link_login": data.get("link_login") or data.get("link-login") or "",
             "dst": data.get("dst") or data.get("link-orig") or "",
         }

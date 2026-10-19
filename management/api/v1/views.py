@@ -1013,6 +1013,18 @@ def public_verify(request, tenant_id):
     payment = ref(f"tenants/{tenant_id}/payments/{payment_id}").get()
     if not payment:
         return ok({"message": "Payment not found"}, 404)
+    router_context = {
+        "router_ip": request.GET.get("router_ip") or request.GET.get("server-address"),
+        "router_client_ip": request.GET.get("ip"),
+        "router_client_mac": request.GET.get("mac"),
+        "router_mac": request.GET.get("mac"),
+        "link_login": request.GET.get("link_login") or request.GET.get("link-login"),
+        "dst": request.GET.get("dst") or request.GET.get("link-orig"),
+    }
+    context_updates = {key: value for key, value in router_context.items() if value and not payment.get(key)}
+    if context_updates:
+        ref(f"tenants/{tenant_id}/payments/{payment_id}").update(context_updates)
+        payment.update(context_updates)
     if payment.get("status") != "success" and payment.get("provider") == "paystack":
         reference = payment.get("paystack_reference")
         if reference:

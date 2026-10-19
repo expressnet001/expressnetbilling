@@ -184,6 +184,9 @@ class OrmPushResult:
         self.instance = instance
         self.key = str(instance.pk)
 
+    def get(self):
+        return model_dict(self.instance, include_id=False)
+
     def update(self, data):
         model_update(self.instance, dict(data or {}))
 
