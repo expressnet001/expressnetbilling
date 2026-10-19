@@ -352,6 +352,47 @@ def create_hotspot_profile(tenant, name, speed, session_timeout=None):
     return result
 
 
+def ensure_rate_limit_fasttrack_exemptions(api):
+    """Keep capped customer connections out of FastTrack, which bypasses queues."""
+    firewall = api.path("ip", "firewall", "filter")
+    comments = {
+        "billing-saas rate-limit bypass fasttrack src",
+        "billing-saas rate-limit bypass fasttrack dst",
+        "billing-saas static bypass fasttrack src",
+        "billing-saas static bypass fasttrack dst",
+    }
+    items = list(firewall.select())
+    fasttrack_item = next((item for item in items if item.get("action") == "fasttrack-connection" and item.get(".id")), None)
+    if not fasttrack_item:
+        return
+    managed_rules = [item for item in items if item.get("comment") in comments]
+    fasttrack_index = items.index(fasttrack_item)
+    if len(managed_rules) == len(comments) and all(items.index(item) < fasttrack_index for item in managed_rules):
+        return
+    for item in items:
+        if item.get("comment") in comments and item.get(".id"):
+            try:
+                firewall.remove(item[".id"])
+            except Exception:
+                pass
+    fasttrack = fasttrack_item.get(".id")
+    rules = (
+        ("src-address", "172.30.0.0/15", "billing-saas rate-limit bypass fasttrack src"),
+        ("dst-address", "172.30.0.0/15", "billing-saas rate-limit bypass fasttrack dst"),
+        ("src-address-list", "Expressnet-bandwidth-clients", "billing-saas static bypass fasttrack src"),
+        ("dst-address-list", "Expressnet-bandwidth-clients", "billing-saas static bypass fasttrack dst"),
+    )
+    for address_field, address_value, comment in rules:
+        firewall.add(**{
+            "chain": "forward",
+            "action": "accept",
+            "connection-state": "established,related",
+            address_field: address_value,
+            "comment": comment,
+            "place-before": fasttrack,
+        })
+
+
 def package_service_type(package):
     raw = str(
         (package or {}).get("service_type")
@@ -1386,6 +1427,7 @@ def upsert_customer_access(tenant, customer, disabled=False):
         return None
     api = router_connect(tenant)
     try:
+        ensure_rate_limit_fasttrack_exemptions(api)
         if service_type == "tv":
             mac_address = str(customer.get("mac_address") or customer.get("username") or "").strip().upper()
             if not mac_address:
@@ -1443,6 +1485,21 @@ def upsert_customer_access(tenant, customer, disabled=False):
             if customer.get("ip_address"):
                 if str(customer.get("ip_address") or "").strip() == "172.30.0.1":
                     return True
+                address_list_path = api.path("ip", "firewall", "address-list")
+                address_list_item = find_router_item_by_fields(
+                    api,
+                    ("ip", "firewall", "address-list"),
+                    {"list": "Expressnet-bandwidth-clients", "address": customer["ip_address"]},
+                )
+                address_list_fields = {
+                    "list": "Expressnet-bandwidth-clients",
+                    "address": customer["ip_address"],
+                    "comment": "billing-saas static bandwidth",
+                }
+                if address_list_item and address_list_item.get(".id"):
+                    address_list_path.update(**{".id": address_list_item[".id"], **address_list_fields})
+                else:
+                    address_list_path.add(**address_list_fields)
                 binding = find_router_item_by_fields(api, ("ip", "hotspot", "ip-binding"), {"address": customer["ip_address"]})
                 binding_fields = {
                     "address": customer["ip_address"],

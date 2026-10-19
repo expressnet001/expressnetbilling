@@ -1508,7 +1508,7 @@ def customer_add(request):
                     create_ppp_profile(request.tenant, pkg["name"], pkg.get("speed"))
                 elif service_type == "hotspot":
                     create_hotspot_profile(request.tenant, pkg["name"], pkg.get("speed"))
-                upsert_customer_access(request.tenant, {**data, "service_type": service_type, "status": customer_status}, disabled=router_disabled)
+                upsert_customer_access(request.tenant, {**data, "package_name": data["package_name"], "speed": pkg.get("speed"), "service_type": service_type, "status": customer_status}, disabled=router_disabled)
                 provisioning_status = "provisioned"
                 provisioning_message = f"{service_type.upper()} access created on MikroTik"
             except (TimeoutError, OSError):

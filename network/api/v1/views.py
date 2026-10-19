@@ -51,6 +51,7 @@ from billing_api.services import (
     _build_port_command_script,
     delete_router_customer,
     disconnect_customer_session,
+    ensure_rate_limit_fasttrack_exemptions,
     captive_portal_url,
     ensure_hotspot_captive_portal,
     find_child_by_field,
@@ -2062,7 +2063,7 @@ def customer_provision(request, customer_id):
                     create_ppp_profile(request.tenant, pkg["name"], pkg.get("speed"))
                 elif service_type == "hotspot":
                     create_hotspot_profile(request.tenant, pkg["name"], pkg.get("speed"))
-            upsert_customer_access(request.tenant, {**customer, "package_name": customer.get("package"), "service_type": service_type}, disabled=customer.get("status") != "active")
+            upsert_customer_access(request.tenant, {**customer, "package_name": customer.get("package"), "speed": (pkg or {}).get("speed"), "service_type": service_type}, disabled=customer.get("status") != "active")
             provisioning_status = "provisioned"
             provisioning_message = f"{service_type.upper()} access synced on MikroTik"
         except (TimeoutError, OSError):
@@ -2153,7 +2154,7 @@ def customer_provision_bulk(request):
                         create_ppp_profile(request.tenant, pkg["name"], pkg.get("speed"))
                     elif service_type == "hotspot":
                         create_hotspot_profile(request.tenant, pkg["name"], pkg.get("speed"))
-                upsert_customer_access(request.tenant, {**customer, "package_name": customer.get("package"), "service_type": service_type}, disabled=customer.get("status") != "active")
+                upsert_customer_access(request.tenant, {**customer, "package_name": customer.get("package"), "speed": (pkg or {}).get("speed"), "service_type": service_type}, disabled=customer.get("status") != "active")
                 provisioning_status = "provisioned"
                 provisioning_message = f"{service_type.upper()} access synced on MikroTik"
             else:
@@ -2287,7 +2288,7 @@ def packages(request, package_id=None):
                 logger.warning("RADIUS package mirror failed tenant=%s package=%s", tenant_id, package_id, exc_info=True)
         updated_package = {"id": package_id, **existing, **updates}
         updated_service_type = package_service_type(updated_package)
-        if updated_service_type in {"hotspot", "pppoe"} and any(key in updates for key in {"name", "speed", "service_type"}):
+        if updated_service_type in {"hotspot", "pppoe", "static"} and any(key in updates for key in {"name", "speed", "service_type"}):
             package_names = {str(existing.get("name") or "").strip(), str(updated_package.get("name") or "").strip()}
             for customer in list_children(f"tenants/{tenant_id}/customers"):
                 if str(customer.get("service_type") or "hotspot").strip().lower() != updated_service_type:
@@ -2295,7 +2296,32 @@ def packages(request, package_id=None):
                 if str(customer.get("package") or "").strip() not in package_names:
                     continue
                 try:
-                    disconnect_customer_session(request.tenant, customer.get("username"), updated_service_type)
+                    if updated_service_type == "static":
+                        static_customer = {
+                            **customer,
+                            "package_name": updated_package.get("name"),
+                            "speed": updated_package.get("speed"),
+                            "service_type": "static",
+                        }
+                        if has_mikrotik_credentials(request.tenant):
+                            upsert_customer_access(
+                                request.tenant,
+                                static_customer,
+                                disabled=customer.get("status") != "active",
+                            )
+                        elif _router_is_agent_linked(request.tenant):
+                            static_script = _customer_secret_script({
+                                **static_customer,
+                                "mikrotik_bridge_name": mikrotik_managed_bridge_name(request.tenant),
+                            })
+                            if static_script:
+                                _queue_router_command(request, {
+                                    "type": "sync_secrets",
+                                    "customer_ids": [customer.get("id")],
+                                    "script": static_script,
+                                })
+                    else:
+                        disconnect_customer_session(request.tenant, customer.get("username"), updated_service_type)
                 except Exception:
                     logger.warning("Failed to disconnect customer after package speed update tenant=%s customer=%s", tenant_id, customer.get("id"), exc_info=True)
         return ok({"success": True, "message": "Package and MikroTik profile updated"})
@@ -2673,6 +2699,7 @@ def router_delete(request):
 def _customer_secret_script(customer):
     """Generate an .rsc snippet that upserts a single customer into /ppp secret or /ip hotspot user."""
     service_type = customer.get("service_type") or "hotspot"
+    fasttrack_script = _rate_limit_fasttrack_exemption_script()
     static_setup_script = ""
     if service_type == "static":
         ip_address = _rsc_escape(customer.get("ip_address") or "")
@@ -2685,6 +2712,10 @@ def _customer_secret_script(customer):
         comment_name = _rsc_escape(customer.get("name") or customer.get("phone") or customer.get("username") or "")
         rate_limit = _rsc_escape(normalize_rate_limit(customer.get("speed") or customer.get("rate_limit") or "") or "")
         queue_name = _rsc_escape(f"Expressnet-static-{ip_address}")
+        static_address_list_script = (
+            f':do {{ /ip firewall address-list remove [find list="Expressnet-bandwidth-clients" address="{ip_address}/32"] }} on-error={{}};'
+            f'/ip firewall address-list add list="Expressnet-bandwidth-clients" address="{ip_address}/32" comment="billing-saas static bandwidth";'
+        )
         queue_script = (
             f':if ("{rate_limit}" != "") do={{ '
             f':if ([:len [/queue simple find name="{queue_name}"]] = 0) do={{'
@@ -2692,14 +2723,14 @@ def _customer_secret_script(customer):
             f'else={{ /queue simple set [find name="{queue_name}"] target="{ip_address}/32" max-limit="{rate_limit}" disabled={disabled} comment="billing-saas static bandwidth" }}; }};'
         )
         if ip_address == "172.30.0.1":
-            return (
+            return fasttrack_script + (
                 f':local billingBridge "{bridge_name}";'
                 ':do { /interface bridge add name=$billingBridge comment="Created by Expressnet" } on-error={};'
                 ':do { /ip address add address=172.30.0.1/16 interface=$billingBridge comment="Expressnet static gateway" } '
                 'on-error={ /ip address set [find interface=$billingBridge comment="Expressnet static gateway"] address=172.30.0.1/16 interface=$billingBridge comment="Expressnet static gateway" };'
                 f'{gateway_cleanup}'
             )
-        return (
+        return fasttrack_script + (
             f':local billingBridge "{bridge_name}";'
             ':do { /interface bridge add name=$billingBridge comment="Created by Expressnet" } on-error={};'
             ':do { /ip pool add name=Expressnet-static-pool ranges=172.30.0.2-172.30.255.254 comment="Expressnet static customer pool" } '
@@ -2711,6 +2742,7 @@ def _customer_secret_script(customer):
             ':do { /ip firewall nat add chain=srcnat src-address=172.30.0.0/16 action=masquerade comment="billing-saas static masquerade" } '
             'on-error={ /ip firewall nat set [find comment="billing-saas static masquerade"] chain=srcnat src-address=172.30.0.0/16 action=masquerade comment="billing-saas static masquerade" };'
             f'{gateway_cleanup}'
+            f'{static_address_list_script}'
             f':do {{ /ip hotspot ip-binding remove [find address="{ip_address}"] }} on-error={{}};'
             f'/ip hotspot ip-binding add address="{ip_address}" type=bypassed disabled={disabled} comment="Expressnet-static-pool: {comment_name}";'
             f'{queue_script}'
@@ -2754,7 +2786,8 @@ def _customer_secret_script(customer):
     )
     if service_type == "pppoe":
         return (
-            ppp_profile_script
+            fasttrack_script
+            + ppp_profile_script
             +
             f':if ([:len [/ppp secret find name="{username}"]] = 0) do={{'
             f' /ppp secret add name="{username}" password="{password}" service=pppoe '
@@ -2763,7 +2796,8 @@ def _customer_secret_script(customer):
             f'service=pppoe profile="{profile}" disabled={disabled} comment="billing-saas-managed" }};'
         )
     return (
-        static_setup_script
+        fasttrack_script
+        + static_setup_script
         +
         hotspot_profile_script
         +
@@ -3015,21 +3049,44 @@ def _delete_voucher_from_router(request, voucher):
         api.close()
 
 
+def _rate_limit_fasttrack_exemption_script():
+    """Ensure customer queues are evaluated before any RouterOS FastTrack rule."""
+    return (
+        ':local billingFasttrack [/ip firewall filter find where action=fasttrack-connection];'
+        ':if ([:len $billingFasttrack] > 0) do={ '
+        ':if ([:len [/ip firewall filter find comment="billing-saas rate-limit bypass fasttrack src"]] = 0 || '
+        '[:len [/ip firewall filter find comment="billing-saas rate-limit bypass fasttrack dst"]] = 0 || '
+        '[:len [/ip firewall filter find comment="billing-saas static bypass fasttrack src"]] = 0 || '
+        '[:len [/ip firewall filter find comment="billing-saas static bypass fasttrack dst"]] = 0) do={ '
+        ':do { /ip firewall filter remove [find comment="billing-saas rate-limit bypass fasttrack src"] } on-error={};'
+        ':do { /ip firewall filter remove [find comment="billing-saas rate-limit bypass fasttrack dst"] } on-error={};'
+        ':do { /ip firewall filter remove [find comment="billing-saas static bypass fasttrack src"] } on-error={};'
+        ':do { /ip firewall filter remove [find comment="billing-saas static bypass fasttrack dst"] } on-error={};'
+        ':local billingFasttrackId [:pick $billingFasttrack 0];'
+        '/ip firewall filter add chain=forward action=accept connection-state=established,related src-address=172.30.0.0/15 place-before=$billingFasttrackId comment="billing-saas rate-limit bypass fasttrack src";'
+        '/ip firewall filter add chain=forward action=accept connection-state=established,related dst-address=172.30.0.0/15 place-before=$billingFasttrackId comment="billing-saas rate-limit bypass fasttrack dst";'
+        '/ip firewall filter add chain=forward action=accept connection-state=established,related src-address-list=Expressnet-bandwidth-clients place-before=$billingFasttrackId comment="billing-saas static bypass fasttrack src";'
+        '/ip firewall filter add chain=forward action=accept connection-state=established,related dst-address-list=Expressnet-bandwidth-clients place-before=$billingFasttrackId comment="billing-saas static bypass fasttrack dst"; }};'
+    )
+
+
 def _package_profile_script(package):
     """Generate an .rsc snippet that upserts one PPPoE or Hotspot package profile."""
     name = _rsc_escape(package.get("name") or "")
     if not name:
         return ""
+    fasttrack_script = _rate_limit_fasttrack_exemption_script()
     service_type = package_service_type(package)
     if service_type == "static":
-        return ""
+        return fasttrack_script
     rate_limit = _rsc_escape(normalize_rate_limit(package.get("speed")) or "")
     rate_limit_field = f' rate-limit="{rate_limit}"'
     session_timeout = "" if package_is_bundle(package) else _rsc_escape(routeros_duration(package_duration_delta(package)) or "")
     session_timeout_field = f' session-timeout="{session_timeout}"' if session_timeout else ""
     if service_type == "pppoe":
         return (
-            f':do {{ '
+            fasttrack_script
+            + f':do {{ '
             f':if ([:len [/ppp profile find name="{name}"]] = 0) do={{'
             f' /ppp profile add name="{name}" local-address=172.31.0.1 remote-address=Expressnet-pool{rate_limit_field}{session_timeout_field} comment="billing-saas-package" }} '
             f'else={{ /ppp profile set [find name="{name}"] local-address=172.31.0.1 remote-address=Expressnet-pool{rate_limit_field}{session_timeout_field} comment="billing-saas-package" }}; '
@@ -3037,7 +3094,8 @@ def _package_profile_script(package):
             f':if ([:len [/ppp profile find name="{name}"]] = 0) do={{ :error "PPPoE profile missing after sync: {name}" }};'
         )
     return (
-        f':do {{ /ppp profile remove [find name="{name}" comment="billing-saas-package"] }} on-error={{}};'
+        fasttrack_script
+        + f':do {{ /ppp profile remove [find name="{name}" comment="billing-saas-package"] }} on-error={{}};'
         f':do {{ '
         f':if ([:len [/ip hotspot user profile find name="{name}"]] = 0) do={{'
         f' /ip hotspot user profile add name="{name}"{rate_limit_field}{session_timeout_field} }} '
@@ -3641,7 +3699,7 @@ def router_provision_script(request, token):
 
     hotspot_file_script = _hotspot_captive_file_script(tenant, app_base_url)
     tenant_packages = [pkg for pkg in list_children(f"tenants/{tenant_id}/packages") if pkg.get("name")]
-    package_profile_script = "".join(_package_profile_script(pkg) for pkg in tenant_packages)
+    package_profile_script = _rate_limit_fasttrack_exemption_script() + "".join(_package_profile_script(pkg) for pkg in tenant_packages)
     package_profile_ids = [str(pkg.get("id")) for pkg in tenant_packages if pkg.get("id")]
     package_by_name = {str(pkg.get("name") or ""): pkg for pkg in tenant_packages}
     tenant_customers = [
@@ -3650,7 +3708,8 @@ def router_provision_script(request, token):
             "speed": (package_by_name.get(str(customer.package or "")) or {}).get("speed"),
         }
         for customer in Customer.objects.filter(tenant_id=tenant_id)
-        if customer.username and str(customer.service_type or "hotspot").lower() in {"pppoe", "hotspot"}
+        if (customer.username and str(customer.service_type or "hotspot").lower() in {"pppoe", "hotspot"})
+        or (str(customer.service_type or "").lower() == "static" and customer.ip_address)
     ]
     customer_secret_script = "".join(_customer_secret_script(customer) for customer in tenant_customers)
     migration_customer_script = _migration_export_provisioning_script(tenant)
