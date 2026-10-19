@@ -1,4 +1,4 @@
-import { CheckCheck, ChevronDown, Coins, Eye, MoreVertical, Plus, Search, X, Settings2 } from 'lucide-react';
+import { CheckCheck, ChevronDown, Coins, MoreVertical, Plus, Search, X, Settings2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
@@ -39,13 +39,10 @@ function sameDay(a, b) {
 
 function MetricCard({ title, value, helper }) {
   return (
-    <div className="rounded-md p-4 shadow-[0_18px_30px_rgba(15,23,42,0.12)]" style={{ background: 'var(--app-metric-card-bg)', color: 'var(--app-text)' }}>
-      <p className="text-xs font-semibold">{title}</p>
-      <div className="mt-3 flex items-center gap-2">
-        <p className="text-xl font-bold">{formatKES(value)}</p>
-        <Eye size={14} />
-      </div>
-      <p className="mt-2 text-xs">{helper}</p>
+    <div className="min-w-0 px-4 py-4 first:pl-5 last:pr-5" style={{ color: 'var(--app-text)' }}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--app-muted)]">{title}</p>
+      <p className="mt-2 truncate text-[22px] font-medium leading-tight tracking-tight">{formatKES(value)}</p>
+      <p className="mt-2 text-xs font-normal text-[var(--app-muted)]">{helper}</p>
     </div>
   );
 }
@@ -258,7 +255,7 @@ export default function Payments() {
         </button></div>
       </div>
 
-      <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-1 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] sm:grid-cols-2 xl:grid-cols-4 [&>div]:border-b [&>div]:border-[var(--app-border)] sm:[&>div:nth-child(odd)]:border-r xl:[&>div]:border-b-0 xl:[&>div:not(:last-child)]:border-r">
         <MetricCard title="Daily Earnings" value={totals.daily} helper="Total earnings today" />
         <MetricCard title="Weekly Earnings" value={totals.weekly} helper="Total earnings this week" />
         <MetricCard title="Monthly Earnings" value={totals.monthly} helper="Total earnings this month" />
@@ -306,6 +303,7 @@ export default function Payments() {
       <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
         <div className="flex justify-end border-b border-slate-200 p-3">
           <label className="relative block w-full max-w-xs">
+            
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input className="form-input mt-0 h-9 pl-9" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} />
           </label>

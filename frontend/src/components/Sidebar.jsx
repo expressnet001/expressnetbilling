@@ -149,8 +149,7 @@ export default function Sidebar({ open, onClose }) {
               {tenantInitial(tenant)}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-semibold text-white">{tenant?.business_name || tenant?.name || 'Expressnet'}</p>
-              <p className="truncate text-[11px] font-normal text-white/70">Tenant Portal</p>
+              <p className="truncate text-[13px] font-normal tracking-[0.01em] text-white">{tenant?.business_name || tenant?.name || 'Expressnet'}</p>
             </div>
             <ChevronDown size={14} className="text-white/75" />
           </div>

@@ -1,4 +1,4 @@
-import { Edit, HelpCircle, Link as LinkIcon, MoreHorizontal, RefreshCw, Search, Trash2, Wifi, WifiOff, XCircle } from 'lucide-react';
+import { Edit, ExternalLink, Globe, Link as LinkIcon, MoreHorizontal, RefreshCw, Search, Trash2, WifiOff, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
@@ -33,6 +33,16 @@ function formatMemory(value) {
   return `${Math.round(bytes / (1024 * 1024))} MB free`;
 }
 
+function webConsoleUrl(router) {
+  const host = String(router.lastSeenIp || router.lanIp || router.wanIp || router.tunnelIp || '').trim();
+  if (!host || host === '-') return '';
+  if (/^https?:\/\//i.test(host)) return host;
+  const secure = router.web_scheme === 'https' || Number(router.web_port) === 443;
+  const port = Number(router.web_port) || (secure ? 443 : 80);
+  const authority = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  return `${secure ? 'https' : 'http'}://${authority}${[80, 443].includes(port) ? '' : `:${port}`}`;
+}
+
 export default function MikrotikSettings() {
   const navigate = useNavigate();
   const [config, setConfig] = useState(null);
@@ -61,6 +71,8 @@ export default function MikrotikSettings() {
       lanIp: item.lan_ip || '',
       lastSeenIp: routerStatus?.last_seen_ip || item.last_seen_ip || '',
       lastSeenAt: routerStatus?.last_seen_at || item.last_seen_at || config?.mikrotik_last_seen_at,
+      web_port: item.web_port || item.webPort || config?.mikrotik_web_port,
+      web_scheme: item.web_scheme || item.webScheme || config?.mikrotik_web_scheme,
       source: routerStatus?.source || 'stored',
       ports: routerStatus?.interfaces?.length ?? item.interface_count,
       version: routerStatus?.device?.version || item.version,
@@ -81,6 +93,7 @@ export default function MikrotikSettings() {
     return true;
   });
   const pagedRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
+  const sessionsCount = Number(routerStatus?.active_sessions?.total ?? routerStatus?.active_sessions ?? 0);
 
   useEffect(() => {
     setPage(1);
@@ -172,106 +185,99 @@ export default function MikrotikSettings() {
   if (loading) return <p className="text-sm font-medium text-slate-600">Loading MikroTik routers...</p>;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <section>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="page-title">MikroTik Routers</h1>
-            <p className="page-subtitle">Routers are linked by running the provisioning command. No API host, username, or password is required.</p>
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--app-muted)]">Network <span className="mx-2 text-[var(--app-border)]">/</span> Routers</p>
+            <h1 className="mt-1 text-[28px] font-medium leading-tight tracking-tight text-[var(--app-text)]">NAS &amp; <span style={{ color: 'var(--app-accent)' }}>routers.</span></h1>
+            <p className="mt-1 text-sm text-[var(--app-muted)]">Link a router, paste the script, go live with PPPoE or Hotspot.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-secondary" onClick={() => toast('Tutorial content will open here when added.')}>
-              <HelpCircle size={16} />
-              Tutorial
-            </button>
-            <button type="button" className="btn-primary" onClick={() => navigate('/mikrotik/link?add=1')}>
+            <button type="button" className="btn-primary rounded-full px-5" onClick={() => navigate('/mikrotik/link?add=1')}>
               <LinkIcon size={16} />
-              Link a MikroTik
+              + Link MikroTik
             </button>
           </div>
         </div>
       </section>
 
+      <section className="grid grid-cols-1 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] sm:grid-cols-2 xl:grid-cols-4 [&>div]:border-b [&>div]:border-[var(--app-border)] sm:[&>div:nth-child(odd)]:border-r xl:[&>div]:border-b-0 xl:[&>div:not(:last-child)]:border-r">
+        {[
+          ['Routers', counts.all, 'registered NAS devices'],
+          ['Online', counts.online, 'reachable via monitoring'],
+          ['Offline', counts.offline, 'not responding'],
+          ['Live Sessions', sessionsCount, 'open sessions right now'],
+        ].map(([label, value, helper]) => (
+          <div key={label} className="min-w-0 px-4 py-4 first:pl-5 last:pr-5">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--app-muted)]">{label}</p>
+            <p className="mt-2 text-[22px] font-medium leading-tight tracking-tight text-[var(--app-text)]">{value}</p>
+            <p className="mt-2 text-xs text-[var(--app-muted)]">{helper}</p>
+          </div>
+        ))}
+      </section>
+
       <section>
-        <div className="border-b border-slate-200">
-          <div className="flex flex-wrap gap-5">
+        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="inline-flex w-fit rounded-full border border-[var(--app-border)] bg-[var(--app-panel)] p-1">
             {[
-              ['all', 'All', counts.all, WifiOff],
-              ['online', 'Online', counts.online, Wifi],
-              ['offline', 'Offline', counts.offline, WifiOff],
-            ].map(([key, label, count, Icon]) => (
+              ['all', 'All', counts.all],
+              ['online', 'Online', counts.online],
+              ['offline', 'Offline', counts.offline],
+            ].map(([key, label, count]) => (
               <button
                 key={key}
                 type="button"
-                className={`inline-flex h-10 items-center gap-2 border-b px-1 text-xs font-medium ${
-                  filter === key ? 'border-[var(--app-accent)] text-[var(--app-accent)]' : 'border-transparent text-slate-600'
+                className={`inline-flex h-8 items-center gap-2 rounded-full px-3 text-xs font-normal transition ${
+                  filter === key ? 'bg-[var(--app-panel-muted)] text-[var(--app-text)]' : 'text-[var(--app-muted)]'
                 }`}
                 onClick={() => setFilter(key)}
               >
-                <Icon size={15} className="text-slate-400" />
                 {label}
-                <span className={`rounded px-1.5 py-0.5 text-[10px] ${key === 'online' ? 'bg-green-50 text-green-700' : key === 'offline' ? 'bg-red-50 text-red-600' : ''}`} style={key === 'all' ? { background: 'var(--app-accent-muted)', color: 'var(--app-accent)' } : undefined}>{count}</span>
+                <span className="rounded-full bg-[var(--app-panel-muted)] px-1.5 py-0.5 text-[10px] text-[var(--app-muted)]">{count}</span>
               </button>
             ))}
           </div>
+          <label className="relative block w-full sm:w-72">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--app-muted)]" size={16} />
+            <input className="form-input mt-0 rounded-full border-[var(--app-border)] pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, model, or shortname..." />
+          </label>
         </div>
 
-        <div className="mt-5 table-shell">
-          <div className="flex justify-end border-b border-slate-200 p-3">
-            <label className="relative block w-full sm:w-72">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-              <input className="form-input mt-0 pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search" />
-            </label>
-          </div>
-
+        <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)]">
           <div className="overflow-x-auto">
-            <table className="min-w-[980px] divide-y divide-slate-200">
-              <thead className="table-head">
+            <table className="min-w-[980px] w-full divide-y divide-[var(--app-border)]">
+              <thead className="bg-[var(--app-panel-muted)] text-left text-xs font-medium uppercase tracking-wide text-[var(--app-muted)]">
                 <tr>
-                  <th className="px-4 py-3">MikroTik Name</th>
-                  <th className="px-4 py-3">Provisioning</th>
-                  <th className="px-4 py-3">CPU</th>
-                  <th className="px-4 py-3">Memory</th>
+                  <th className="px-4 py-3">Router</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Last Seen</th>
-                  <th className="px-4 py-3">Source</th>
-                  <th className="px-4 py-3">Tunnel IP</th>
-                  <th className="px-4 py-3">Ports</th>
+                  <th className="px-4 py-3">Sessions</th>
+                  <th className="px-4 py-3">Winbox</th>
+                  <th className="px-4 py-3">Web</th>
+                  <th className="px-4 py-3">Last Online</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-[var(--app-border)] text-sm text-[var(--app-text)]">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td className="table-cell text-slate-500" colSpan="10">No MikroTik routers linked yet.</td>
+                    <td className="px-4 py-8 text-center text-[var(--app-muted)]" colSpan="7">No MikroTik routers linked yet.</td>
                   </tr>
                 ) : pagedRows.map((router) => (
                   <tr key={router.id}>
-                    <td className="table-cell font-medium text-slate-950">
+                    <td className="px-4 py-3 font-medium">
                       <div>{router.routerName || router.boardName}</div>
-                      {router.routerName && <div className="mt-1 text-[11px] font-normal text-slate-500">{router.boardName}</div>}
+                      {router.routerName && <div className="mt-1 text-[11px] font-normal text-[var(--app-muted)]">{router.boardName}</div>}
                     </td>
-                    <td className="table-cell"><span className="rounded px-2 py-1 text-[11px] font-medium" style={{ background: 'var(--app-accent-muted)', color: 'var(--app-accent)' }}>{router.provisioning}</span></td>
-                    <td className="table-cell">{router.cpu === undefined ? '-' : <span className="rounded bg-green-50 px-2 py-1 text-[11px] font-medium text-green-700">{router.cpu}%</span>}</td>
-                    <td className="table-cell">{router.memory ? <span className="rounded px-2 py-1 text-[11px] font-medium" style={{ background: 'var(--app-accent-muted)', color: 'var(--app-accent)' }}>{formatMemory(router.memory)}</span> : '-'}</td>
-                    <td className="table-cell">
-                      <span className={`rounded px-2 py-1 text-[11px] font-medium ${router.status === 'online' ? 'bg-green-50 text-green-700' : router.status === 'suspended' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>
+                    <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-normal ${router.status === 'online' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : router.status === 'suspended' ? 'border-amber-500/30 bg-amber-500/10 text-amber-500' : 'border-red-500/30 bg-red-500/10 text-red-500'}`}>
                         {router.status === 'online' ? 'Online' : router.status === 'suspended' ? 'Suspended' : 'Offline'}
                       </span>
                     </td>
-                    <td className="table-cell">{formatLastSeen(router.lastSeenAt)}</td>
-                    <td className="table-cell"><span className="rounded bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700">{router.source === 'routeros_api' ? 'Live API' : router.source === 'agent_report' ? 'Agent' : 'Stored'}</span></td>
-                    <td className="table-cell">
-                      <div className="font-semibold text-green-700">{router.tunnelIp}</div>
-                      {(router.wanIp || router.lanIp) && (
-                        <div className="mt-1 space-y-0.5 text-[11px] text-slate-500">
-                          {router.wanIp && <div>WAN {router.wanIp}</div>}
-                          {router.lanIp && <div>LAN {router.lanIp}</div>}
-                        </div>
-                      )}
-                    </td>
-                    <td className="table-cell">{router.ports ?? '-'}</td>
-                    <td className="table-cell">
+                    <td className="px-4 py-3 text-center">{router.id === rows[0]?.id ? sessionsCount : '-'}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-emerald-500">:{router.winbox_port || router.winboxPort || config?.mikrotik_winbox_port || '8291'}</td>
+                    <td className="px-4 py-3">{webConsoleUrl(router) ? <a href={webConsoleUrl(router)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full border border-[var(--app-border)] px-3 py-1 text-xs text-[var(--app-text)] transition hover:border-[var(--app-accent)] hover:text-[var(--app-accent)]"><Globe size={13} />Open<ExternalLink size={11} /></a> : <span className="text-xs text-[var(--app-muted)]">IP unavailable</span>}</td>
+                    <td className="px-4 py-3 text-xs">{formatLastSeen(router.lastSeenAt)}</td>
+                    <td className="px-4 py-3">
                       <div className="relative flex justify-end">
                         <button
                           type="button"

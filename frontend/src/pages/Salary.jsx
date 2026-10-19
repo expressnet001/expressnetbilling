@@ -1,4 +1,4 @@
-import { Banknote, ChevronDown, Pencil, Plus, Search } from 'lucide-react';
+import { ChevronDown, Pencil, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import Pagination from '../components/Pagination';
@@ -28,13 +28,10 @@ function formatDate(value) {
 
 function MetricCard({ title, value, helper }) {
   return (
-    <div className="rounded-md p-5 shadow-[0_18px_30px_rgba(15,23,42,0.10)]" style={{ background: 'var(--app-metric-card-bg)' }}>
-      <p className="text-xs font-semibold text-slate-500">{title}</p>
-      <div className="mt-3 flex items-center gap-2 text-black">
-        <p className="text-xl font-bold">{formatKES(value)}</p>
-        <Banknote size={15} style={{ color: 'var(--app-accent)' }} />
-      </div>
-      <p className="mt-2 text-xs text-slate-500">{helper}</p>
+    <div className="min-w-0 px-4 py-4 first:pl-5 last:pr-5" style={{ color: 'var(--app-text)' }}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--app-muted)]">{title}</p>
+      <p className="mt-2 truncate text-[22px] font-medium leading-tight tracking-tight">{formatKES(value)}</p>
+      <p className="mt-2 text-xs font-normal text-[var(--app-muted)]">{helper}</p>
     </div>
   );
 }
@@ -105,7 +102,7 @@ export default function Salary() {
         </button>
       </div>
 
-      <section className="grid gap-6 md:grid-cols-3">
+      <section className="grid grid-cols-1 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] sm:grid-cols-3 [&>div]:border-b [&>div]:border-[var(--app-border)] sm:[&>div]:border-b-0 sm:[&>div:not(:last-child)]:border-r">
         <MetricCard title="Paid This Month" value={totals.monthly} helper="Completed salary payments" />
         <MetricCard title="Pending Salary" value={totals.pending} helper="Awaiting payment" />
         <MetricCard title="Payroll Total" value={totals.total} helper="All visible salary records" />
