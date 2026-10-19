@@ -138,6 +138,9 @@ def create_paystack_subaccount(*, tenant, percentage_charge=0):
         "bank_code": bank_code,
         "account_number": account_number,
         "percentage_charge": float(percentage_charge),
+        # Ensure the tenant share is paid out to its configured bank account
+        # automatically instead of remaining in a manually settled balance.
+        "settlement_schedule": "auto",
         "metadata": {"tenant_id": str(tenant.get("id") or "")},
     }
     try:

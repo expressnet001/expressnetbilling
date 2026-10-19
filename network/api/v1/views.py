@@ -1105,7 +1105,7 @@ def captive_portal_page(request, tenant_id):
                     <strong>Payment successful.</strong>
                     {detail}
                   </div>
-                  <script>setTimeout(function(){{window.location.href='{retry_url}';}}, 3000);</script>
+                  <script>setTimeout(function(){{window.location.href='{retry_url}';}}, 1500);</script>
                 """
             else:
                 payment_notice = _paid_access_html(
@@ -1533,7 +1533,7 @@ def captive_portal_pay(request, tenant_id):
                 <p class="muted">Waiting for {provider_label} to confirm your payment. This page will connect your device when payment is confirmed.</p>
                 <p><a class="buy-btn" href="{refresh_url}">I have paid</a></p>
               </div>
-              <script>setTimeout(function(){{window.location.replace('{refresh_url}');}}, 5000);</script>
+              <script>setTimeout(function(){{window.location.replace('{refresh_url}');}}, 2000);</script>
             </main>
             """,
             201,
@@ -1556,7 +1556,7 @@ def _paid_access_html(title, payload, login_action="", auto_submit=True):
             f"<input type='hidden' name='dst' value='{dst}'>"
             "</form>"
             f"<button form='paid-login' type='submit'>Connect now</button>"
-            + ("<script>setTimeout(function(){var f=document.getElementById('paid-login'); if(f) f.submit();}, 1200);</script>" if auto_submit else "")
+            + ("<script>setTimeout(function(){var f=document.getElementById('paid-login'); if(f) f.submit();}, 250);</script>" if auto_submit else "")
         )
     return f"""
       <main>

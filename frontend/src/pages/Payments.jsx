@@ -33,6 +33,14 @@ function formatDate(value) {
   return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
+function disbursementLabel(payment) {
+  const status = String(payment.tenant_settlement_status || '').toLowerCase();
+  if (payment.provider === 'voucher') return 'Voucher';
+  if (status === 'paystack_subaccount') return 'Tenant bank';
+  if (status) return status.replaceAll('_', ' ');
+  return 'Queued';
+}
+
 function sameDay(a, b) {
   return a && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
@@ -337,7 +345,7 @@ export default function Payments() {
                   <td className="px-5 py-4">{formatKES(payment.amount)}</td>
                   <td className="px-5 py-4"><span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] text-emerald-700">{payment.status === 'success' ? 'Yes' : 'No'}</span></td>
                   <td className="px-5 py-4">{formatDate(payment.paid_at || payment.created_at || payment.initiated_at)}</td>
-                  <td className="px-5 py-4"><span className="rounded-md border px-2 py-1 text-[10px]" style={{ borderColor: 'var(--app-accent-soft)', background: 'var(--app-accent-muted)', color: 'var(--app-accent)' }}>{payment.tenant_settlement_status || (payment.provider === 'voucher' ? 'Voucher' : 'Queued')}</span></td>
+                  <td className="px-5 py-4"><span className="rounded-md border px-2 py-1 text-[10px]" style={{ borderColor: 'var(--app-accent-soft)', background: 'var(--app-accent-muted)', color: 'var(--app-accent)' }}>{disbursementLabel(payment)}</span></td>
                   <td className="px-5 py-4 text-right" style={{ color: 'var(--app-accent)' }}><MoreVertical size={16} /></td>
                 </tr>
               ))}
