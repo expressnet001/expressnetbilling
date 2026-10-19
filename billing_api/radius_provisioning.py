@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def upsert_pg_customer(tenant_obj, customer_data):
-    """Mirror a Firebase customer record into the Postgres Customer table."""
+    """Create or update an SQL customer record."""
     username = customer_data.get("username")
     if not username:
         return None
@@ -41,7 +41,7 @@ def upsert_pg_customer(tenant_obj, customer_data):
 
 
 def upsert_pg_package(tenant_obj, package_data):
-    """Mirror a Firebase package record into the Postgres InternetPackage table."""
+    """Create or update an SQL internet package record."""
     name = package_data.get("name")
     if not name:
         return None
@@ -63,8 +63,7 @@ def upsert_pg_package(tenant_obj, package_data):
 
 
 def backfill_radius_data(tenant_obj, tenant_id):
-    """Sync all Firebase customers and packages into Postgres so the RADIUS
-    server (which reads Postgres) can authenticate them."""
+    """Prepare existing SQL customers and packages for RADIUS authentication."""
     from .services import list_children
 
     backfilled_customers = 0

@@ -181,7 +181,6 @@ function PlatformHealth({ health }) {
   const rows = [
     [Database, 'Database', health?.dbError || 'Primary database check', health?.db || 'unknown', health?.db === 'ok' ? 'green' : 'rose'],
     [Wifi, 'Redis', health?.redisError || 'Cache and queue broker check', health?.redis || 'unknown', health?.redis === 'ok' ? 'green' : 'rose'],
-    [Server, 'Firebase', 'Realtime database configuration check', health?.firebase || 'unknown', health?.firebase === 'ok' ? 'green' : 'rose'],
   ];
   const iconTone = { green: 'bg-emerald-100 text-emerald-600', rose: 'bg-rose-100 text-rose-600' };
 

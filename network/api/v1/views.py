@@ -64,7 +64,6 @@ from billing_api.services import (
     initiate_daraja_stk,
     iso_now,
     walled_garden_hosts,
-    firebase_backup_configured,
     list_children,
     mikrotik_managed_bridge_name,
     normalize_public_url,
@@ -167,9 +166,9 @@ def err(message, status=400):
 
 def admin_notification_recipients():
     configured = list(getattr(settings, "ADMIN_NOTIFICATION_EMAILS", []))
-    firebase_admins = [admin.get("email") for admin in list_children("admins") if admin.get("email")]
+    stored_admins = [admin.get("email") for admin in list_children("admins") if admin.get("email")]
     django_admins = list(User.objects.filter(is_staff=True, is_active=True).values_list("email", flat=True))
-    return sorted({email for email in [*configured, *firebase_admins, *django_admins] if email})
+    return sorted({email for email in [*configured, *stored_admins, *django_admins] if email})
 
 
 def send_system_email(subject, message, recipients):
@@ -434,10 +433,6 @@ def health_payload():
     except Exception as exc:
         checks["redis"] = "error"
         checks["redisError"] = f"{exc.__class__.__name__}: {str(exc)[:160]}"
-    try:
-        checks["firebase"] = "ok" if not firebase_backup_configured() else "ok"
-    except Exception:
-        checks["firebase"] = "error"
     checks["status"] = "healthy" if checks["db"] == "ok" and checks["redis"] == "ok" else "degraded"
     return checks
 
@@ -2367,12 +2362,6 @@ def vouchers(request, voucher_id=None):
         script = _voucher_delete_script(voucher)
         try:
             voucher_obj.delete()
-            try:
-                from core.services.shared import backup_delete
-
-                backup_delete(f"{voucher_path}/{voucher_id}")
-            except Exception:
-                logger.warning("Voucher backup delete failed tenant=%s voucher=%s", tenant_id, voucher_id, exc_info=True)
         except Exception as exc:
             logger.exception("Voucher database delete failed tenant=%s voucher=%s", tenant_id, voucher_id)
             return ok({"message": f"Voucher could not be deleted: {exc}"}, 500)
@@ -3254,8 +3243,7 @@ def router_provision_command(request):
             "provision_token_expires_at": expires_at.isoformat(),
             "mikrotik_provisioning_status": "pending",
         })
-    # Backfill Postgres tables from Firebase so the RADIUS server can
-    # authenticate existing customers created before RADIUS was enabled.
+    # Ensure existing SQL customer and package records are ready for RADIUS.
     try:
         from billing_api.radius_provisioning import backfill_radius_data
         from billing_api.models import Tenant as TenantModel

@@ -13,7 +13,7 @@
 **Gaps identified:**
 - No revenue trend chart (daily/weekly/monthly MRR).
 - No subscription renewal calendar — no view of which tenants expire soon.
-- "System Health" is hardcoded to `"healthy"` on the backend — no real checks (DB, Firebase, MikroTik reachability).
+- "System Health" is based on database and Redis checks; MikroTik reachability is not part of the health endpoint.
 - No platform-level payment breakdown (pending vs paid vs failed across all tenants).
 - No quick-action shortcuts (e.g. activate a pending tenant from the dashboard).
 - No alerts/notifications panel for overdue tenant subscriptions.
@@ -71,7 +71,7 @@
 **Gaps identified:**
 - **No `TenantSubscription` model or endpoint.** There is no data model representing "Tenant X is on plan Y, pays KES Z/month, expires on date D."
 - **No `/admin/billing` or `/admin/subscriptions` endpoint.** The admin cannot manage platform-level billing at all via the API.
-- **`admin_stats` is N+1 query heavy** — it loops through every tenant and every payment in Firebase with no aggregation, will degrade badly at scale.
+- **`admin_stats` is N+1 query heavy** — it loops through every tenant and payment without aggregation, which will degrade at scale.
 - **`admin_stats` `systemHealth` always returns `"healthy"`** — no real probe.
 - **No `/admin/tenants/{id}/subscription` endpoint** to read or write subscription data.
 - **No auto-expiry job** (Celery task or cron) to sweep tenants past their `subscription_expires_at` and set `status = suspended`.
@@ -79,7 +79,7 @@
 - **Rate limiting is in-process memory (`defaultdict`)** — this works for a single dyno but fails across multiple workers/containers. Must be moved to Redis or database-backed storage.
 - **No load balancing configuration.** The `Procfile` runs a single `gunicorn` worker. No `WEB_CONCURRENCY`, no connection pooling, no Redis, no task queue.
 - **SQLite in production** — `db.sqlite3` is the only database. SQLite cannot handle concurrent writes at scale and is not suitable for multi-tenant production traffic.
-- **Firebase Realtime Database used as primary data store for tenant data**, while Django ORM models exist but are underused. This dual-store pattern creates sync complexity and makes queries slow (no indexed queries possible on Firebase Realtime DB for analytics).
+- **Tenant data is stored through Django ORM models**, but some analytics still load records tenant by tenant instead of using database aggregation.
 
 ---
 
@@ -107,9 +107,9 @@
 | **Load balancing** | Single gunicorn process | Set `WEB_CONCURRENCY`, add `--worker-class gevent`, add nginx proxy or use Heroku/Railway horizontal scaling |
 | **Caching** | None | Cache tenant lookups, stats aggregates with Redis |
 | **Concurrent writes** | SQLite can't handle them | Move to PostgreSQL + connection pooling (pgBouncer or `CONN_MAX_AGE`) |
-| **Firebase as primary store** | Creates N+1 HTTP reads | Move tenant/customer/payment data to PostgreSQL; use Firebase only for real-time push if needed |
+| **Tenant-by-tenant analytics** | Creates repeated database reads | Use SQL aggregation for tenant/customer/payment reports |
 | **Static files** | Served by Django | Move to whitenoise or CDN |
-| **Health endpoint** | None | Add `/api/health/` that checks DB, Redis, Firebase connectivity |
+| **Health endpoint** | Partial infrastructure checks | Include DB, Redis, and MikroTik reachability where appropriate |
 
 ---
 
@@ -121,7 +121,7 @@ Use this prompt directly in a new conversation (or with Claude Code) to implemen
 
 ```
 You are a senior full-stack engineer working on a multi-tenant ISP billing SaaS built with:
-- Backend: Django 6, Django REST Framework, Firebase Realtime DB (currently used as primary data store), SQLite (dev), PyJWT auth
+- Backend: Django 6, Django REST Framework, SQL database (SQLite in development and PostgreSQL in production), PyJWT auth
 - Frontend: React + Vite + Tailwind CSS, React Router, lucide-react icons, react-hot-toast
 - Target hosting: Heroku / Railway (12-factor app)
 
@@ -159,8 +159,8 @@ A4. Upgrade gunicorn for concurrency.
     - Add gevent to requirements.txt.
 
 A5. Add a real health check endpoint.
-    - Add GET /api/health/ that checks: DB (simple SELECT 1), Redis (PING), Firebase (ref('/').get() with 2s timeout).
-    - Returns JSON { db: "ok"|"error", redis: "ok"|"error", firebase: "ok"|"error", status: "healthy"|"degraded" }.
+    - Add GET /api/health/ checks for DB (SELECT 1), Redis (PING), and optionally MikroTik reachability.
+    - Returns JSON with DB, Redis, and overall status.
     - Add to urls.py. No auth required.
 
 A6. Add django-whitenoise for static files.
@@ -384,7 +384,7 @@ SECTION I — NEW ADMIN SYSTEM PAGE
 
 Create frontend/src/pages/admin/AdminSystem.jsx:
 
-I1. Health panel: DB, Redis, Firebase status (colored badges, auto-refresh every 30s).
+I1. Health panel: DB and Redis status (colored badges, auto-refresh every 30s).
 
 I2. Load info: number of active tenants, total API requests today (if tracked), gunicorn worker count from env.
 

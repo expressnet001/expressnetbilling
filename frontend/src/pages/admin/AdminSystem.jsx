@@ -37,12 +37,12 @@ export default function AdminSystem() {
     <div className="space-y-5">
       <div>
         <h1 className="page-title">System</h1>
-        <p className="page-subtitle">Infrastructure health, database, Redis, Firebase, and migrations.</p>
+        <p className="page-subtitle">Infrastructure health, database, Redis, and migrations.</p>
       </div>
       <section className="theme-card rounded-lg border p-5 shadow-sm">
         <div className="flex items-center justify-between"><h2 className="theme-text flex items-center gap-2 text-sm font-semibold tracking-tight"><Server size={17} />Health</h2><button className="btn-secondary" onClick={load}><RefreshCw size={15} />Refresh</button></div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">
-          {['db', 'redis', 'firebase', 'status'].map((key) => <div key={key} className="theme-card-muted rounded-md border p-3"><p className="theme-muted text-xs font-medium uppercase">{key}</p><div className="mt-2"><Badge value={health?.[key]} /></div></div>)}
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          {['db', 'redis', 'status'].map((key) => <div key={key} className="theme-card-muted rounded-md border p-3"><p className="theme-muted text-xs font-medium uppercase">{key}</p><div className="mt-2"><Badge value={health?.[key]} /></div></div>)}
         </div>
       </section>
       <section className="theme-card rounded-lg border p-5 shadow-sm">

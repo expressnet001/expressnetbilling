@@ -72,7 +72,6 @@ from billing_api.services import (
     initiate_daraja_stk,
     iso_now,
     walled_garden_hosts,
-    firebase_backup_configured,
     list_children,
     mikrotik_managed_bridge_name,
     normalize_public_url,
@@ -292,9 +291,9 @@ def err(message, status=400):
 
 def admin_notification_recipients():
     configured = list(getattr(settings, "ADMIN_NOTIFICATION_EMAILS", []))
-    firebase_admins = [admin.get("email") for admin in list_children("admins") if admin.get("email")]
+    stored_admins = [admin.get("email") for admin in list_children("admins") if admin.get("email")]
     django_admins = list(User.objects.filter(is_staff=True, is_active=True).values_list("email", flat=True))
-    return sorted({email for email in [*configured, *firebase_admins, *django_admins] if email})
+    return sorted({email for email in [*configured, *stored_admins, *django_admins] if email})
 
 
 def send_system_email(subject, message, recipients):
@@ -543,10 +542,6 @@ def health_payload():
     except Exception as exc:
         checks["redis"] = "error"
         checks["redisError"] = f"{exc.__class__.__name__}: {str(exc)[:160]}"
-    try:
-        checks["firebase"] = "ok" if not firebase_backup_configured() else "ok"
-    except Exception:
-        checks["firebase"] = "error"
     checks["status"] = "healthy" if checks["db"] == "ok" and checks["redis"] == "ok" else "degraded"
     return checks
 
@@ -922,11 +917,13 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
         if is_mpesa_stk:
             charge = initiate_paystack_mpesa_stk(email=email, amount=amount_payable, phone=phone, reference=reference, currency=currency, subaccount=subaccount, bearer=tenant.get("paystack_bearer") or "account", metadata=metadata)
             payment_ref.update({"paystack_reference": charge.get("reference") or reference, "paystack_charge_status": charge.get("status") or "", "paystack_display_text": charge.get("display_text") or "", "collection_account": "tenant_paystack", "tenant_settlement_status": "paystack_subaccount", "tenant_paystack_subaccount_code": subaccount, "payment_method": "paystack_mpesa_stk", "customer_message": charge.get("display_text") or "Approve the M-Pesa prompt on your phone to complete payment."})
+            _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
             access_token = make_payment_access_token(tenant_id, payment_ref.key)
             payment_ref.update({"access_verify_token": access_token})
             return ok({"success": True, "message": charge.get("display_text") or "Approve the Paystack M-Pesa STK prompt on your phone.", "paymentId": payment_ref.key, "verifyToken": access_token, "provider": "paystack", "paymentMethod": "mpesa_stk", "reference": charge.get("reference") or reference}, 201)
         checkout = initiate_paystack_checkout(email=email, amount=amount_payable, reference=reference, callback_url=callback_url, currency=currency, subaccount=subaccount or None, bearer=tenant.get("paystack_bearer") or "account", metadata=metadata)
         payment_ref.update({"paystack_access_code": checkout.get("access_code"), "paystack_authorization_url": checkout.get("authorization_url"), "collection_account": "tenant_paystack", "tenant_settlement_status": "paystack_subaccount", "tenant_paystack_subaccount_code": subaccount})
+        _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
         access_token = make_payment_access_token(tenant_id, payment_ref.key)
         payment_ref.update({"access_verify_token": access_token})
         return ok({"success": True, "message": "Continue to Paystack to complete your payment.", "paymentId": payment_ref.key, "verifyToken": access_token, "provider": "paystack", "authorizationUrl": checkout.get("authorization_url"), "reference": reference}, 201)
@@ -1001,6 +998,10 @@ def public_verify(request, tenant_id):
         found = Payment.objects.filter(paystack_reference=callback_reference, tenant_id=tenant_id).first()
         if found:
             requested_payment_id = str(found.pk)
+        else:
+            resolved_payment = _find_paystack_payment(callback_reference)
+            if resolved_payment and str(resolved_payment[0]) == str(tenant_id):
+                requested_payment_id = str(resolved_payment[1])
     if not requested_payment_id:
         return ok({"message": "Payment ID is required"}, 400)
     payment_id = str(requested_payment_id)
@@ -1072,6 +1073,8 @@ def public_verify(request, tenant_id):
         except Exception:
             logger.exception("Paid payment activation retry failed tenant=%s payment=%s", tenant_id, payment_id)
             return ok({"success": False, "status": "activation_failed", "message": "Payment confirmed, but internet activation is still pending. Please wait a moment."}, 202)
+    if payment.get("status") == "success" and payment.get("provider") == "paystack":
+        _upsert_sql_paystack_payment(tenant_id, payment_id, payment)
     can_return_access = verify_payment_access_token(
         tenant_id,
         payment_id,
@@ -1120,12 +1123,16 @@ def complete_paystack_payment(tenant_id, payment_id, transaction):
         paid_at = transaction.get("paid_at") or iso_now()
         payment_ref.update({"status": "success", "payment_code": code, "paid_at": paid_at, "paystack_transaction_id": str(transaction.get("id") or ""), "paystack_paid_at": paid_at, "paystack_channel": transaction.get("channel") or "", "customer_message": "Payment confirmed by Paystack"})
         payment = payment_ref.get() or payment
+        payment = {**payment, "status": "success", "payment_code": code, "paid_at": paid_at, "paystack_transaction_id": str(transaction.get("id") or ""), "paystack_paid_at": paid_at, "paystack_channel": transaction.get("channel") or ""}
+        _upsert_sql_paystack_payment(tenant_id, payment_id, payment)
         tenant = {"id": tenant_id, **(ref(f"tenants/{tenant_id}").get() or {})}
         try:
             activate_paid_access(tenant, payment_id, payment, payment.get("phone"), code)
         except Exception:
             logger.exception("Paystack payment is confirmed but access activation failed tenant=%s payment=%s", tenant_id, payment_id)
             payment_ref.update({"access_status": "activation_pending", "activation_error": "Retry activation from payment verification"})
+    else:
+        _upsert_sql_paystack_payment(tenant_id, payment_id, payment)
     return True
 
 
@@ -1142,10 +1149,9 @@ def paystack_callback(request):
         return redirect("/?payment_status=pending")
     if transaction.get("status") != "success":
         return redirect("/?payment_status=failed")
-    payment = Payment.objects.filter(paystack_reference=reference).select_related("tenant").first()
-    if payment:
-        tenant_id = str(payment.tenant_id)
-        payment_id = str(payment.pk)
+    resolved = _find_paystack_payment(reference)
+    if resolved:
+        tenant_id, payment_id = resolved
         complete_paystack_payment(tenant_id, payment_id, transaction)
         return redirect(f"/portal/{tenant_id}?payment_id={payment_id}&verify_token={make_payment_access_token(tenant_id, payment_id)}")
     return redirect("/?payment_status=received")
@@ -1180,9 +1186,10 @@ def paystack_webhook(request):
         return ok({"message": "Could not verify transaction"}, 502)
     if transaction.get("status") != "success":
         return ok({"success": True, "message": "Transaction not successful"})
-    payment = Payment.objects.filter(paystack_reference=reference).first()
-    if payment:
-        complete_paystack_payment(str(payment.tenant_id), str(payment.pk), transaction)
+    resolved = _find_paystack_payment(reference)
+    if resolved:
+        tenant_id, payment_id = resolved
+        complete_paystack_payment(tenant_id, payment_id, transaction)
         return ok({"success": True})
     logger.warning("No payment found for Paystack reference=%s", reference)
     return ok({"success": True, "message": "No matching payment"})
@@ -3070,7 +3077,7 @@ def settings_notifications(request):
         tenant_obj.apply_data(updates)
         tenant_obj.save()
     except Tenant.DoesNotExist:
-        logger.warning("Notification settings saved to Firebase only; tenant model not found tenant=%s", request.tenant["id"])
+        logger.warning("Notification settings could not be matched to a tenant model tenant=%s", request.tenant["id"])
     saved = {**request.tenant, **updates}
     return ok({
         "success": True,
@@ -3113,6 +3120,70 @@ def _upsert_sql_customer(tenant_id, data):
         customer.radius_secret = customer.password or ""
     customer.save()
     return customer
+
+
+def _upsert_sql_paystack_payment(tenant_id, payment_id, payment_data):
+    """Store customer portal Paystack payment details in the tenant SQL ledger."""
+    if not payment_data:
+        return None
+    reference = str(payment_data.get("paystack_reference") or "").strip()
+    try:
+        tenant_obj = Tenant.objects.filter(pk=tenant_id).first()
+        if not tenant_obj:
+            logger.warning("Paystack SQL payment sync skipped; tenant model not found tenant=%s payment=%s", tenant_id, payment_id)
+            return None
+        sql_payment = Payment.objects.filter(tenant=tenant_obj, paystack_reference=reference).first() if reference else None
+        if not sql_payment:
+            sql_payment = Payment(tenant=tenant_obj)
+        fields = {
+            "customer_name": payment_data.get("customer_name"),
+            "package_id": str(payment_data.get("package_id") or "") or None,
+            "package_name": payment_data.get("package_name"),
+            "service_type": payment_data.get("service_type") or "hotspot",
+            "amount": payment_data.get("amount") or payment_data.get("amount_payable") or 0,
+            "payment_code": payment_data.get("payment_code"),
+            "provider": "paystack",
+            "currency": payment_data.get("currency") or "KES",
+            "phone": payment_data.get("phone") or "",
+            "status": payment_data.get("status") or "pending",
+            "paid_at": payment_data.get("paid_at"),
+            "initiated_at": payment_data.get("initiated_at") or iso_now(),
+            "paystack_reference": reference or None,
+            "paystack_access_code": payment_data.get("paystack_access_code"),
+            "paystack_authorization_url": payment_data.get("paystack_authorization_url"),
+            "paystack_transaction_id": payment_data.get("paystack_transaction_id"),
+            "paystack_channel": payment_data.get("paystack_channel"),
+            "paystack_paid_at": payment_data.get("paystack_paid_at"),
+            "source": payment_data.get("source") or "customer_portal",
+            "access_username": payment_data.get("access_username"),
+            "access_password": payment_data.get("access_password"),
+            "access_expires_at": payment_data.get("access_expires_at"),
+            "access_status": payment_data.get("access_status"),
+        }
+        for field, value in fields.items():
+            setattr(sql_payment, field, value)
+        extra = dict(sql_payment.extra or {})
+        extra.update({
+            "tenant_settlement_status": payment_data.get("tenant_settlement_status"),
+            "collection_account": payment_data.get("collection_account"),
+            "tenant_paystack_subaccount_code": payment_data.get("tenant_paystack_subaccount_code"),
+            "access_error": payment_data.get("access_error"),
+            "last_synced_at": iso_now(),
+        })
+        sql_payment.extra = extra
+        sql_payment.save()
+        return sql_payment
+    except Exception:
+        logger.exception("Paystack SQL payment sync failed tenant=%s payment=%s reference=%s", tenant_id, payment_id, reference)
+        return None
+
+
+def _find_paystack_payment(reference):
+    """Resolve a Paystack reference directly against the tenant SQL ledger."""
+    payment = Payment.objects.filter(paystack_reference=reference).first()
+    if payment:
+        return str(payment.tenant_id), str(payment.pk)
+    return None
 
 
 def _numeric_pk(value):
@@ -3471,6 +3542,8 @@ def activate_paid_access(tenant, payment_id, payment, phone, payment_code):
     pg_payment_id = _numeric_pk(payment_id)
     pg_customer_id = _numeric_pk(payment.get("customer_id"))
     pg_payment = Payment.objects.filter(tenant_id=tenant_id, pk=pg_payment_id).first() if pg_payment_id else None
+    if not pg_payment and payment.get("paystack_reference"):
+        pg_payment = Payment.objects.filter(tenant_id=tenant_id, paystack_reference=payment.get("paystack_reference")).first()
     pg_customer = None
     if pg_payment and pg_payment.customer_id:
         pg_customer = pg_payment.customer

@@ -64,7 +64,6 @@ from billing_api.services import (
     initiate_daraja_stk,
     iso_now,
     walled_garden_hosts,
-    firebase_backup_configured,
     list_children,
     mikrotik_managed_bridge_name,
     normalize_public_url,
@@ -135,9 +134,9 @@ def _normalize_permissions(value):
 
 def admin_notification_recipients():
     configured = list(getattr(settings, "ADMIN_NOTIFICATION_EMAILS", []))
-    firebase_admins = [admin.get("email") for admin in list_children("admins") if admin.get("email")]
+    stored_admins = [admin.get("email") for admin in list_children("admins") if admin.get("email")]
     django_admins = list(User.objects.filter(is_staff=True, is_active=True).values_list("email", flat=True))
-    return sorted({email for email in [*configured, *firebase_admins, *django_admins] if email})
+    return sorted({email for email in [*configured, *stored_admins, *django_admins] if email})
 
 
 def send_system_email(subject, message, recipients):
@@ -583,10 +582,6 @@ def health_payload():
     except Exception as exc:
         checks["redis"] = "error"
         checks["redisError"] = f"{exc.__class__.__name__}: {str(exc)[:160]}"
-    try:
-        checks["firebase"] = "ok" if not firebase_backup_configured() else "ok"
-    except Exception:
-        checks["firebase"] = "error"
     checks["status"] = "healthy" if checks["db"] == "ok" and checks["redis"] == "ok" else "degraded"
     return checks
 
@@ -861,7 +856,6 @@ def health(request):
                 "nodeEnv": os.getenv("NODE_ENV", "development"),
                 "databaseEngine": settings.DATABASES["default"]["ENGINE"],
                 "databaseName": str(settings.DATABASES["default"]["NAME"]),
-                "firebaseBackupEnabled": firebase_backup_configured(),
                 "jwtSecretSet": bool(os.getenv("JWT_SECRET")),
                 "adminJwtSecretSet": bool(os.getenv("ADMIN_JWT_SECRET")),
             },

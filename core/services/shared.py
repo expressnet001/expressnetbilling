@@ -1,30 +1,19 @@
 import base64
 import hashlib
 import hmac
-import json
-import logging
 import os
 import socket
 import ssl
 import uuid
-import base64
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from urllib.parse import parse_qsl, urlparse, urlsplit, urlunsplit
 
 import bcrypt
-import firebase_admin
 import jwt
 import requests
 from django.conf import settings
-from firebase_admin import credentials, db as firebase_db
 
 from billing_api.models import AdminAuditLog, AdminUser, Customer, InternetPackage, Payment, SiteSettings, Tenant, Ticket, Voucher
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-logger = logging.getLogger(__name__)
-
 
 
 class PaymentProviderError(RuntimeError):
@@ -50,71 +39,6 @@ def require_secret(name):
     if len(value) < 16:
         raise RuntimeError(f"{name} must be at least 16 characters")
     return value
-
-
-def firebase_backup_configured():
-    if os.getenv("FIREBASE_BACKUP_ENABLED", "true").lower() in {"0", "false", "no", "off"}:
-        return False
-    return bool(os.getenv("FIREBASE_DATABASE_URL") and os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON"))
-
-
-def init_firebase_backup():
-    if not firebase_backup_configured():
-        return False
-    if firebase_admin._apps:
-        return True
-
-    if os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON"):
-        service_account = json.loads(os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON"))
-        if service_account.get("private_key"):
-            service_account["private_key"] = service_account["private_key"].replace("\\n", "\n")
-    else:
-        candidates = [BASE_DIR / "serviceAccount.json"]
-        candidates += list(BASE_DIR.glob("*firebase-adminsdk*.json"))
-        service_path = next((path for path in candidates if path.exists()), None)
-        if not service_path:
-            return False
-        service_account = json.loads(service_path.read_text(encoding="utf-8"))
-
-    database_url = os.getenv("FIREBASE_DATABASE_URL", "").strip().strip("\"'").rstrip(" ,/\t\r\n")
-    if not database_url:
-        return False
-
-    firebase_admin.initialize_app(credentials.Certificate(service_account), {"databaseURL": database_url})
-    return True
-
-
-def firebase_backup_ref(path):
-    if not init_firebase_backup():
-        return None
-    return firebase_db.reference(path)
-
-
-def backup_set(path, data):
-    try:
-        backup = firebase_backup_ref(path)
-        if backup is not None:
-            backup.set(data)
-    except Exception:
-        logger.warning("Firebase backup set failed for %s", path, exc_info=True)
-
-
-def backup_update(path, data):
-    try:
-        backup = firebase_backup_ref(path)
-        if backup is not None:
-            backup.update(data)
-    except Exception:
-        logger.warning("Firebase backup update failed for %s", path, exc_info=True)
-
-
-def backup_delete(path):
-    try:
-        backup = firebase_backup_ref(path)
-        if backup is not None:
-            backup.delete()
-    except Exception:
-        logger.warning("Firebase backup delete failed for %s", path, exc_info=True)
 
 
 def model_dict(instance, include_id=True, exclude=None):
@@ -236,60 +160,32 @@ class OrmRef:
                 if hasattr(instance, key):
                     setattr(instance, key, value)
         instance.save()
-        result = OrmPushResult(instance, self._child_backup_path(instance))
-        result.backup_set()
-        return result
+        return OrmPushResult(instance)
 
     def update(self, data):
         parts = self.parts
         if parts == ["site_settings"]:
             instance = self._site_settings() or SiteSettings()
             model_update(instance, dict(data or {}))
-            backup_update("site_settings", dict(data or {}))
             return
         instance = self._resolve_instance()
         if not instance:
             return
         model_update(instance, dict(data or {}))
-        backup_update(self._backup_path(), dict(data or {}))
 
     def delete(self):
         instance = self._resolve_instance()
         if instance:
             instance.delete()
-            backup_delete(self._backup_path())
-
-    def _backup_path(self):
-        return "/".join(self.parts)
-
-    def _child_backup_path(self, instance):
-        parts = list(self.parts)
-        if parts == ["tenants"]:
-            return f"tenants/{instance.pk}"
-        if len(parts) == 3 and parts[0] == "tenants" and parts[2] in {"packages", "customers", "payments", "tickets", "vouchers"}:
-            return f"{'/'.join(parts)}/{instance.pk}"
-        if parts == ["admins"]:
-            return f"admins/{instance.pk}"
-        if parts == ["admin_audit_logs"]:
-            return f"admin_audit_logs/{instance.pk}"
-        return f"{'/'.join(parts)}/{instance.pk}"
 
 
 class OrmPushResult:
-    def __init__(self, instance, backup_path):
+    def __init__(self, instance):
         self.instance = instance
         self.key = str(instance.pk)
-        self.backup_path = backup_path
 
     def update(self, data):
         model_update(self.instance, dict(data or {}))
-        backup_update(self.backup_path, dict(data or {}))
-
-    def backup_set(self):
-        if hasattr(self.instance, "as_dict"):
-            backup_set(self.backup_path, self.instance.as_dict(include_id=False))
-        else:
-            backup_set(self.backup_path, {})
 
 
 def ref(path=""):

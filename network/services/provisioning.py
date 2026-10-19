@@ -14,11 +14,9 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlparse, urlsplit, urlunsplit
 
 import bcrypt
-import firebase_admin
 import jwt
 import requests
 from django.conf import settings
-from firebase_admin import credentials, db as firebase_db
 
 from billing_api.models import AdminAuditLog, AdminUser, Customer, InternetPackage, Payment, SiteSettings, Tenant, Ticket, Voucher
 
