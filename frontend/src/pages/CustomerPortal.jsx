@@ -308,16 +308,11 @@ export default function CustomerPortal() {
         link_login: routerContext.linkLogin,
         dst: routerContext.dst,
         provider: paymentMethod === 'paystack' ? 'paystack' : undefined,
-        paystack_method: paymentMethod === 'paystack' ? 'mpesa_stk' : undefined,
         payment_method: paymentMethod === 'paystack' ? undefined : paymentMethod,
       });
-      if (data.authorizationUrl) {
-        window.location.href = data.authorizationUrl;
-        return;
-      }
       toast.success(data.message || 'Check your phone for the payment prompt');
       if (data.paymentId) {
-        setVerification({ success: false, status: 'pending', message: paymentMethod === 'paystack' ? 'Waiting for Paystack M-Pesa confirmation.' : 'Waiting for M-Pesa confirmation.' });
+        setVerification({ success: false, status: 'pending', message: 'Waiting for payment confirmation.' });
         setPendingPayment({ id: data.paymentId, verifyToken: data.verifyToken || '' });
       }
       setSelectedPackage(null);
@@ -634,7 +629,7 @@ export default function CustomerPortal() {
               </div>
               <button type="button" className="btn-primary mt-5 w-full" onClick={pay} disabled={paying}>
                 <CreditCard size={18} />
-        {paying ? 'Sending STK push...' : (paymentMethod === 'paystack' ? 'Pay with Paystack M-Pesa STK' : 'Send M-Pesa Prompt')}
+                {paying ? 'Sending payment prompt...' : 'Send M-Pesa Prompt'}
               </button>
             </div>
           </section>

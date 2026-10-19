@@ -72,7 +72,7 @@ def initiate_paystack_mpesa_stk(*, email, amount, phone, reference, currency="KE
     """Start a Paystack M-Pesa mobile money charge (customer authorizes by STK PIN)."""
     secret = paystack_secret_key()
     if not secret:
-        raise PaymentProviderError("Paystack checkout is not configured yet. Please contact support.", "Missing PAYSTACK_SECRET_KEY", 503)
+        raise PaymentProviderError("Paystack M-Pesa payments are not configured yet. Please contact support.", "Missing PAYSTACK_SECRET_KEY", 503)
     digits = re.sub(r"\D", "", str(phone or ""))
     if digits.startswith("0"):
         digits = "254" + digits[1:]

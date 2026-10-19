@@ -726,7 +726,8 @@ def tenant_subscription_status(request):
             return ok({"message": "No system fee is due because this tenant has no successful internet sales for the current month."}, 400)
         reference = f"SYS-{tenant.pk}-{secrets.token_urlsafe(12)}".replace("_", "-")
         callback_base = normalize_public_url(os.getenv("PAYSTACK_CALLBACK_BASE_URL") or getattr(settings, "PAYSTACK_CALLBACK_BASE_URL", "") or public_base_url(request))
-        callback_url = f"{callback_base}/api/paystack/callback"
+        api_path = str(getattr(settings, "API_BASE_PATH", "api")).strip("/")
+        callback_url = f"{callback_base}/{api_path}/paystack/callback"
         try:
             checkout = initiate_paystack_checkout(
                 email=tenant.email,
