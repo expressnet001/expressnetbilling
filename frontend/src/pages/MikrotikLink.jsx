@@ -40,7 +40,6 @@ export default function MikrotikSettings() {
   const [selectedServices, setSelectedServices] = useState(['hotspot']);
   const [selectedPorts, setSelectedPorts] = useState([]);
   const [routerName, setRouterName] = useState('');
-  const [savingName, setSavingName] = useState(false);
   const [migrationMode, setMigrationMode] = useState(false);
 
   const configured = useMemo(
@@ -134,6 +133,8 @@ export default function MikrotikSettings() {
       const params = new URLSearchParams();
       if (isAddingRouter) params.set('fresh', '1');
       if (migrationMode) params.set('migrate', '1');
+      const name = routerName.trim();
+      if (name) params.set('name', name);
       const query = params.toString();
       const { data } = await api.get(`/router/provision-command${query ? `?${query}` : ''}`);
       setProvision(data);
@@ -163,18 +164,6 @@ export default function MikrotikSettings() {
   const goToConfiguration = async () => {
     const data = await pullRouterStatus();
     if (data) setActiveStep('configure');
-  };
-
-  const saveRouterName = async () => {
-    setSavingName(true);
-    try {
-      await api.patch('/settings/mikrotik', { mikrotik_name: routerName.trim() });
-      toast.success('MikroTik name saved');
-    } catch (error) {
-      toast.error(error.response?.data?.message || 'Failed to save MikroTik name');
-    } finally {
-      setSavingName(false);
-    }
   };
 
   const togglePort = (portName) => {
@@ -247,44 +236,32 @@ export default function MikrotikSettings() {
   if (loading) return <p className="text-sm font-medium text-slate-600">Loading MikroTik configuration...</p>;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 text-[13px] font-normal tracking-[0.005em]">
       {showProvisioning && (
-        <section id="link-mikrotik" className={`surface-card p-4 ${activeStep === 'link' ? '' : 'hidden'}`}>
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <section id="link-mikrotik" className={`surface-card p-3 sm:p-4 ${activeStep === 'link' ? '' : 'hidden'}`}>
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="page-title">{isAddingRouter ? 'Add another MikroTik device' : 'Link MikroTik Device'}</h1>
-              
-            </div>
-            <div className={`inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium ${configured ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
-              {configured ? <CheckCircle2 size={17} /> : <Router size={17} />}
-              {configured ? 'Configured' : 'Needs setup'}
             </div>
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h2 className="text-sm font-bold text-slate-950">Provisioning command</h2>
-              <p className="mt-1 text-sm text-slate-600">Run this command in the MikroTik terminal. Use the Copy button so the URL stays plain RouterOS text.</p>
-            </div>
+          <div className="flex justify-end">
             <button type="button" className="btn-secondary" onClick={loadProvisionCommand}>
               <RefreshCw size={16} />
               New Command
             </button>
           </div>
-          <div className="mt-4 grid gap-3 rounded-lg border border-slate-200 bg-white p-4 sm:grid-cols-[1fr_auto] sm:items-end">
+          <div className="mt-3 grid gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel-muted)] p-3">
             <label className="block">
               <span className="form-label">MikroTik name</span>
               <input
-                className="form-input"
+                className="form-input theme-input"
                 value={routerName}
                 onChange={(event) => setRouterName(event.target.value)}
                 placeholder="Main office router"
               />
             </label>
-            <button type="button" className="btn-secondary h-11" onClick={saveRouterName} disabled={savingName}>
-              {savingName ? 'Saving...' : 'Save Name'}
-            </button>
           </div>
-          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-4">
+          <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-panel-muted)] p-3">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4 rounded border-slate-300 text-[var(--app-accent)] focus:ring-[var(--app-accent)]"
@@ -292,36 +269,34 @@ export default function MikrotikSettings() {
               onChange={(event) => setMigrationMode(event.target.checked)}
             />
             <span>
-              <span className="block text-sm font-semibold text-slate-950">Migrate from another system</span>
-              <span className="mt-1 block text-sm text-slate-600">
-                Export existing PPPoE secrets, Hotspot customers, package profiles, and active sessions first. Run normal provisioning after the export has completed.
-              </span>
+              <span className="block text-sm font-normal text-[var(--app-text)]">Migrate existing router data</span>
+              <span className="mt-0.5 block text-xs text-[var(--app-muted)]">Export PPPoE users, Hotspot users, profiles, and sessions before provisioning.</span>
             </span>
           </label>
-          <div className="mt-4 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 text-white shadow-sm">
-            <div className="grid gap-3 px-4 pt-4 sm:grid-cols-[1fr_auto] sm:items-center">
-              <span className="text-xs font-bold uppercase tracking-wide text-slate-300">{provision?.mode === 'migration' ? 'Migration export command' : 'Router terminal'}</span>
-              <button type="button" className="btn-secondary justify-center border-slate-700 bg-slate-800 text-white hover:bg-slate-700 sm:w-auto" onClick={() => copy(provision?.command, 'Command')} disabled={!provision?.command}>
+          <div className="mt-3 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] text-[var(--app-text)]">
+            <div className="grid gap-2 px-3 pt-3 sm:grid-cols-[1fr_auto] sm:items-center">
+              <span className="text-xs font-medium uppercase tracking-wide text-[var(--app-muted)]">{provision?.mode === 'migration' ? 'Migration export command' : 'Router terminal'}</span>
+              <button type="button" className="btn-secondary justify-center sm:w-auto" onClick={() => copy(provision?.command, 'Command')} disabled={!provision?.command}>
                 <Clipboard size={15} />
                 Copy
               </button>
             </div>
             <textarea
-              className="mx-4 mb-4 mt-3 block h-36 w-[calc(100%-2rem)] resize-none rounded-md border border-slate-700 bg-slate-800 p-4 font-mono text-xs leading-6 text-slate-100 outline-none"
+              className="theme-input mx-3 mb-3 mt-2 block h-28 w-[calc(100%-1.5rem)] resize-none rounded-md border border-[var(--app-border)] p-3 font-mono text-xs leading-5 outline-none"
               readOnly
               spellCheck="false"
               value={provision?.command || 'Generating command...'}
               onFocus={(event) => event.target.select()}
             />
             {provision?.mode === 'migration' && (
-              <p className="px-4 pb-4 text-xs font-semibold text-amber-200">This command only saves the current router data into Expressnet. Turn migration off afterward to generate the normal provisioning command.</p>
+              <p className="px-3 pb-3 text-xs font-normal text-[var(--app-muted)]">Migration export only. Turn this off to provision the router.</p>
             )}
-            <div className="grid gap-3 border-t border-slate-700 bg-slate-800 px-4 py-3 sm:grid-cols-[1fr_auto] sm:items-center">
+            <div className="grid gap-2 border-t border-[var(--app-border)] bg-[var(--app-panel-muted)] px-3 py-2 sm:grid-cols-[1fr_auto] sm:items-center">
               <div className="min-w-0">
-                <p className="text-sm font-semibold leading-5 text-slate-50">Run the command below in the MikroTik terminal if the device mode is not set to advanced mode</p>
-                <pre className="mt-2 overflow-auto whitespace-pre-wrap break-all rounded-md bg-slate-900/70 px-3 py-2 text-xs leading-5 text-slate-100">/system/device-mode/update mode=advanced</pre>
+                <p className="text-xs font-normal leading-5 text-[var(--app-text)]">If needed, switch the device to advanced mode:</p>
+                <pre className="theme-input mt-2 overflow-auto whitespace-pre-wrap break-all rounded-md border border-[var(--app-border)] px-3 py-2 font-mono text-xs leading-5">/system/device-mode/update mode=advanced</pre>
               </div>
-              <button type="button" className="btn-secondary justify-center border-slate-700 bg-slate-900 text-white hover:bg-slate-700 sm:w-auto" onClick={() => copy('/system/device-mode/update mode=advanced', 'Advanced mode command')}>
+              <button type="button" className="btn-secondary justify-center sm:w-auto" onClick={() => copy('/system/device-mode/update mode=advanced', 'Advanced mode command')}>
                 <Clipboard size={15} />
                 Copy
               </button>
@@ -347,7 +322,7 @@ export default function MikrotikSettings() {
               </div>
             </div>
           )}
-          <div className="mt-4 flex justify-end">
+          <div className="mt-3 flex justify-end">
             <button type="button" className="btn-primary" onClick={goToConfiguration} disabled={pullingStatus}>
               {pullingStatus ? 'Pulling live config...' : 'Next'}
               <ArrowRight size={16} />

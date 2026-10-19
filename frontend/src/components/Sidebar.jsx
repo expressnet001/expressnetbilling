@@ -122,7 +122,7 @@ export default function Sidebar({ open, onClose }) {
 
   const navClass = ({ isActive }) =>
     [
-      'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[12px] font-normal transition',
+      'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[12px] font-light transition',
       isActive
         ? 'bg-[var(--sidebar-active)] text-white shadow-[inset_3px_0_0_rgba(255,255,255,0.28)]'
         : 'text-white/88 hover:bg-white/10 hover:text-white',
@@ -145,18 +145,18 @@ export default function Sidebar({ open, onClose }) {
       >
         <div className="mb-3 rounded-md border p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]" style={{ background: 'color-mix(in srgb, var(--sidebar-bottom) 28%, transparent)', borderColor: 'color-mix(in srgb, var(--sidebar-border) 32%, transparent)' }}>
           <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base font-semibold text-white shadow-sm" style={{ background: 'var(--sidebar-avatar)' }}>
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base font-light tracking-wide text-white shadow-sm" style={{ background: 'var(--sidebar-avatar)' }}>
               {tenantInitial(tenant)}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-normal tracking-[0.01em] text-white">{tenant?.business_name || tenant?.name || 'Expressnet'}</p>
+              <p className="truncate text-[13px] font-light tracking-[0.01em] text-white">{tenant?.business_name || tenant?.name || 'Expressnet'}</p>
             </div>
             <ChevronDown size={14} className="text-white/75" />
           </div>
         </div>
 
 
-        <nav className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 tracking-[0.01em]">
           {sections.map((section, index) => {
             if (section.staffOnly && isTenantAdmin(tenant)) return null;
             const links = visibleLinks(section.links);
@@ -183,7 +183,7 @@ export default function Sidebar({ open, onClose }) {
               <div key={section.title} className="border-t border-white/10 pt-2 first:border-t-0 first:pt-0">
                 <button
                   type="button"
-                  className={`flex h-7 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[12px] font-normal transition hover:bg-white/10 ${groupActive ? 'text-white' : 'text-white/84'}`}
+                  className={`flex h-7 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[12px] font-light transition hover:bg-white/10 ${groupActive ? 'text-white' : 'text-white/84'}`}
                   onClick={() => toggleSection(section.title)}
                   aria-expanded={expanded}
                 >
@@ -198,7 +198,7 @@ export default function Sidebar({ open, onClose }) {
                         key={`${section.title}-${label}-${to}`}
                         to={to}
                         className={({ isActive }) => [
-                          'ml-6 flex h-7 items-center gap-2 rounded-md px-2 text-[12px] font-normal transition',
+                          'ml-6 flex h-7 items-center gap-2 rounded-md px-2 text-[12px] font-light transition',
                           isActive ? 'bg-[var(--sidebar-active)] text-white' : 'text-white/84 hover:bg-white/10 hover:text-white',
                         ].join(' ')}
                         onClick={onClose}

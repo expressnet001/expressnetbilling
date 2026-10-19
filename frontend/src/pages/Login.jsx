@@ -15,11 +15,8 @@ export default function Login() {
   const { login } = useAuth();
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({ email: '', password: '' });
-  const [challengeId, setChallengeId] = useState('');
-  const [verificationCode, setVerificationCode] = useState('');
   const [errors, setErrors] = useState({});
   const [showPassword, setShowPassword] = useState(false);
-  const [resending, setResending] = useState(false);
 
   const update = (event) => {
     setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
@@ -27,13 +24,6 @@ export default function Login() {
   };
 
   const validate = () => {
-    if (challengeId) {
-      if (verificationCode.length !== 6) {
-        toast.error('Enter the 6-digit verification code');
-        return false;
-      }
-      return true;
-    }
     const nextErrors = {};
     if (!form.email.trim()) nextErrors.email = 'Email is required';
     if (!form.password) nextErrors.password = 'Password is required';
@@ -47,13 +37,7 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const payload = challengeId ? { challenge_id: challengeId, code: verificationCode } : form;
-      const { data } = await api.post('/auth/login', payload);
-      if (data.requires_two_step) {
-        setChallengeId(data.challenge_id);
-        toast.success(data.message || 'Verification code sent');
-        return;
-      }
+      const { data } = await api.post('/auth/login', form);
       login(data.token, data.tenant);
       toast.success('Welcome back');
       navigate(location.state?.from?.pathname || '/dashboard', { replace: true });
@@ -61,19 +45,6 @@ export default function Login() {
       toast.error(getMessage(error));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const resendVerification = async () => {
-    if (!challengeId || resending) return;
-    setResending(true);
-    try {
-      const { data } = await api.post('/auth/login', { resend_challenge_id: challengeId });
-      toast.success(data.message || 'Verification code resent');
-    } catch (error) {
-      toast.error(getMessage(error));
-    } finally {
-      setResending(false);
     }
   };
 
@@ -86,17 +57,15 @@ export default function Login() {
         </div>
 
         <form className="space-y-5" onSubmit={submit}>
-          {!challengeId ? (
-            <>
-              <div>
-                <label className="form-label" htmlFor="email">Email</label>
-                <input id="email" name="email" type="email" className="form-input" value={form.email} onChange={update} />
-                {errors.email && <p className="form-error">{errors.email}</p>}
-              </div>
+          <div>
+            <label className="form-label" htmlFor="email">Email</label>
+            <input id="email" name="email" type="email" className="form-input" value={form.email} onChange={update} />
+            {errors.email && <p className="form-error">{errors.email}</p>}
+          </div>
 
-              <div>
-                <label className="form-label" htmlFor="password">Password</label>
-                <div className="relative">
+          <div>
+            <label className="form-label" htmlFor="password">Password</label>
+            <div className="relative">
               <input
                 id="password"
                 name="password"
@@ -113,34 +82,13 @@ export default function Login() {
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
-                </div>
-                {errors.password && <p className="form-error">{errors.password}</p>}
-              </div>
-            </>
-          ) : (
-            <div>
-              <label className="form-label" htmlFor="verificationCode">Verification code</label>
-              <input
-                id="verificationCode"
-                className="form-input text-center text-lg tracking-[0.35em]"
-                inputMode="numeric"
-                maxLength={6}
-                value={verificationCode}
-                onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                autoFocus
-              />
-              <p className="mt-2 text-xs text-slate-500">Enter the 6-digit code sent to your email.</p>
             </div>
-          )}
+            {errors.password && <p className="form-error">{errors.password}</p>}
+          </div>
 
           <button type="submit" className="btn-primary w-full" disabled={loading}>
-            {loading ? 'Signing in...' : challengeId ? 'Verify and login' : 'Login'}
+            {loading ? 'Signing in...' : 'Login'}
           </button>
-          {challengeId && (
-            <button type="button" className="btn-secondary w-full justify-center" onClick={resendVerification} disabled={loading || resending}>
-              {resending ? 'Resending...' : 'Resend verification email'}
-            </button>
-          )}
         </form>
 
         <p className="mt-6 text-center text-sm text-slate-600">

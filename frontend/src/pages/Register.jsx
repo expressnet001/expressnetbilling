@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { CheckCircle2, X } from 'lucide-react';
 import api from '../api/axios';
 
 const initialForm = {
@@ -32,10 +33,10 @@ function Field({ name, type = 'text', value, error, onChange }) {
 }
 
 export default function Register() {
-  const navigate = useNavigate();
   const [form, setForm] = useState(initialForm);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const [registration, setRegistration] = useState(null);
 
   const update = (event) => {
     setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
@@ -61,8 +62,11 @@ export default function Register() {
       const { data } = await api.post('/auth/register', {
         ...form,
       });
-      toast.success(data.message || 'Registration successful. Please wait for admin activation.');
-      navigate('/login');
+      setRegistration({
+        message: data.message || 'You have been successfully registered. Check your email for verification.',
+        email: form.email,
+        subdomain: data.domain || data.subdomain || '',
+      });
     } catch (error) {
       const message = error.response?.data?.message || error.response?.data?.error || error.message || 'Registration failed';
       toast.error(message);
@@ -106,6 +110,19 @@ export default function Register() {
           </div>
         </form>
       </section>
+      {registration && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="registration-success-title" className="relative w-full max-w-md rounded-xl bg-white p-7 shadow-2xl ring-1 ring-slate-200">
+            <button type="button" onClick={() => setRegistration(null)} className="absolute right-4 top-4 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X size={19} /></button>
+            <CheckCircle2 size={38} className="text-emerald-600" />
+            <h2 id="registration-success-title" className="mt-4 text-xl font-semibold text-slate-900">Registration successful</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">You have been successfully registered. Check your email for verification and your tenant subdomain.</p>
+            <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">Email sent to <span className="font-medium">{registration.email}</span></p>
+            {registration.subdomain && <p className="mt-2 text-sm text-slate-600">Tenant subdomain: <span className="font-medium text-slate-900">{registration.subdomain}</span></p>}
+            <button type="button" className="btn-primary mt-5 w-full" onClick={() => setRegistration(null)}>Got it</button>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

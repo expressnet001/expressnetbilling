@@ -395,25 +395,34 @@ def tenant_portal_domain(slug):
 
 
 def notify_tenant_registered(tenant, request=None):
-    login_url = f"{public_base_url(request).rstrip('/')}/login" if request else "/login"
+    workspace_url = tenant.get("workspace_url") or (f"https://{tenant.get('domain')}" if tenant.get("domain") else "")
+    login_url = f"{workspace_url.rstrip('/')}/login" if workspace_url else (f"{public_base_url(request).rstrip('/')}/login" if request else "/login")
     send_system_email(
         "Your Expressnetbilling workspace is ready",
         (
             f"Hello {tenant.get('owner_name') or tenant.get('business_name')},\n\n"
             f"Your {tenant.get('business_name') or 'Expressnetbilling'} workspace has been created.\n\n"
             f"Subdomain: {tenant.get('subdomain')}\n"
-            f"Workspace URL: {tenant.get('workspace_url')}\n"
-            f"Login: {login_url}\n\n"
+            f"Workspace URL: {workspace_url}\n"
+            f"Sign in: {login_url}\n\n"
             "Use the email and password you provided during registration to sign in."
         ),
         [tenant.get("email")],
     )
 
 
+def _tenant_registration_login_url(tenant, fallback=""):
+    workspace_url = tenant.get("workspace_url") or (f"https://{tenant.get('domain')}" if tenant.get("domain") else "")
+    if workspace_url:
+        return f"{workspace_url.rstrip('/')}/login"
+    return fallback or "/login"
+
+
 def send_tenant_registration_notifications_async(tenant_id, tenant, login_url):
     def _send():
         try:
             notify_admins_tenant_signup(tenant_id, tenant)
+            workspace_login_url = _tenant_registration_login_url(tenant, login_url)
             send_system_email(
                 "Your Expressnetbilling workspace is ready",
                 (
@@ -421,7 +430,7 @@ def send_tenant_registration_notifications_async(tenant_id, tenant, login_url):
                     f"Your {tenant.get('business_name') or 'Expressnetbilling'} workspace has been created.\n\n"
                     f"Subdomain: {tenant.get('subdomain')}\n"
                     f"Workspace URL: {tenant.get('workspace_url')}\n"
-                    f"Login: {login_url}\n\n"
+                    f"Sign in: {workspace_login_url}\n\n"
                     "Use the email and password you provided during registration to sign in."
                 ),
                 [tenant.get("email")],
@@ -925,9 +934,9 @@ def auth_register(request):
     tenant_instance = Tenant.objects.filter(pk=tenant_ref.key).first()
     if tenant_instance:
         ensure_subscription(tenant_instance, data.get("plan") or "basic")
-    login_url = f"{public_base_url(request).rstrip('/')}/login"
+    login_url = f"{workspace_url.rstrip('/')}/login"
     send_tenant_registration_notifications_async(tenant_ref.key, tenant_data, login_url)
-    return ok({"success": True, "message": "Business registered successfully. Your account is active.", "tenantId": tenant_ref.key})
+    return ok({"success": True, "message": "You have been successfully registered. Check your email for verification and your tenant subdomain.", "tenantId": tenant_ref.key, "subdomain": tenant_data.get("subdomain"), "domain": tenant_data.get("domain"), "workspaceUrl": tenant_data.get("workspace_url")})
 
 
 @csrf_exempt
@@ -966,27 +975,11 @@ def auth_login(request):
     email = str(data["email"]).lower().strip()
     password = str(data["password"]).strip()
 
-    def start_two_step(tenant, recipient_email, member_id=None):
-        if not getattr(settings, "TENANT_LOGIN_2FA_ENABLED", True):
-            try:
-                return ok(_tenant_login_payload(tenant, member_id=member_id))
-            except Exception as exc:
-                return ok({"message": f"Server configuration error: {exc}"}, 500)
-        code = f"{secrets.randbelow(1000000):06d}"
-        challenge_id = _store_tenant_login_challenge(
-            {"tenant_id": tenant["id"], "member_id": member_id, "code": code, "email": recipient_email}
-        )
-        sent = send_login_verification_email(recipient_email, code)
-        if not sent:
-            return ok({"message": "We could not send the verification email. Please try again."}, 502)
-        return ok(
-            {
-                "success": True,
-                "requires_two_step": True,
-                "challenge_id": challenge_id,
-                "message": "Verification code sent to your email.",
-            }
-        )
+    def complete_login(tenant, member_id=None):
+        try:
+            return ok(_tenant_login_payload(tenant, member_id=member_id))
+        except Exception as exc:
+            return ok({"message": f"Server configuration error: {exc}"}, 500)
 
     tenant_obj = Tenant.objects.filter(email__iexact=email).first()
     if tenant_obj:
@@ -994,7 +987,7 @@ def auth_login(request):
             staff_tenant, member_id, member, staff_password_ok = _find_staff_login(email, password)
             if staff_tenant and staff_password_ok:
                 _clear_login_failures(request, email)
-                return start_two_step(staff_tenant, member.get("email"), member_id=member_id)
+                return complete_login(staff_tenant, member_id=member_id)
             limited = _login_failure_response(request, email)
             if limited:
                 return limited
@@ -1005,7 +998,7 @@ def auth_login(request):
             tenant_obj.status = "active"
             tenant_obj.save(update_fields=["status"])
             tenant["status"] = "active"
-        return start_two_step(tenant, tenant.get("email"))
+        return complete_login(tenant)
 
     staff_tenant, member_id, member, staff_password_ok = _find_staff_login(email, password)
     if staff_tenant:
@@ -1015,7 +1008,7 @@ def auth_login(request):
                 return limited
             return ok({"message": "Wrong password"}, 401)
         _clear_login_failures(request, email)
-        return start_two_step(staff_tenant, member.get("email"), member_id=member_id)
+        return complete_login(staff_tenant, member_id=member_id)
 
     limited = _login_failure_response(request, email)
     if limited:

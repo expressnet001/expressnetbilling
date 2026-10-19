@@ -189,9 +189,7 @@ export default function MikrotikSettings() {
       <section>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--app-muted)]">Network <span className="mx-2 text-[var(--app-border)]">/</span> Routers</p>
-            <h1 className="mt-1 text-[28px] font-medium leading-tight tracking-tight text-[var(--app-text)]">NAS &amp; <span style={{ color: 'var(--app-accent)' }}>routers.</span></h1>
-            <p className="mt-1 text-sm text-[var(--app-muted)]">Link a router, paste the script, go live with PPPoE or Hotspot.</p>
+            <h1 className="text-[28px] font-medium leading-tight tracking-tight text-[var(--app-text)]">Link <span style={{ color: 'var(--app-accent)' }}>Routers</span></h1>
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" className="btn-primary rounded-full px-5" onClick={() => navigate('/mikrotik/link?add=1')}>

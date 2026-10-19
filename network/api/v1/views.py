@@ -3226,6 +3226,13 @@ def _radius_server_config(tenant, wg_config=None, base_url=""):
 def router_provision_command(request):
     fresh_router = request.GET.get("fresh") == "1"
     migration_mode = request.GET.get("migrate") == "1" or request.GET.get("migration") == "1"
+    requested_router_name = str(request.GET.get("name") or "").strip()[:120]
+    if requested_router_name:
+        ref(f"tenants/{request.tenant['id']}").update({
+            "mikrotik_name": requested_router_name,
+            "router_name": requested_router_name,
+            "mikrotik_updated_at": iso_now(),
+        })
     expires_at = utcnow() + timedelta(hours=2)
     payload = {
         "purpose": "mikrotik_provision",
