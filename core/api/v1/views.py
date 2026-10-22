@@ -366,13 +366,14 @@ def notify_admins_tenant_signup(tenant_id, tenant):
 
 
 def notify_tenant_activated(tenant):
+    login_url = _tenant_registration_login_url(tenant)
     send_system_email(
         "Your Expressnetbilling account is active",
         (
             f"Hello {tenant.get('owner_name') or tenant.get('business_name')},\n\n"
             f"Your {tenant.get('business_name') or 'Expressnetbilling'} account has been activated. "
             "You can now sign in and finish setting up your workspace.\n\n"
-            "Login: /login"
+            f"Sign in: {login_url}"
         ),
         [tenant.get("email")],
     )
@@ -384,7 +385,7 @@ def tenant_slug(value):
 
 
 def tenant_portal_domain(slug):
-    base_domain = str(os.getenv("TENANT_BASE_DOMAIN") or os.getenv("SAAS_PORTAL_HOST") or os.getenv("PUBLIC_APP_URL") or "").strip().rstrip("/")
+    base_domain = str(os.getenv("TENANT_BASE_DOMAIN") or os.getenv("PUBLIC_BASE_DOMAIN") or os.getenv("SAAS_PORTAL_HOST") or os.getenv("PUBLIC_APP_URL") or "").strip().rstrip("/")
     base_domain = base_domain.replace("https://", "").replace("http://", "").strip("/")
     if not base_domain:
         base_domain = "expressnetbilling.com"
@@ -393,9 +394,16 @@ def tenant_portal_domain(slug):
     return f"{slug}.{base_domain}"
 
 
+def tenant_portal_url(slug):
+    domain = tenant_portal_domain(slug)
+    hostname = domain.split(":", 1)[0].lower()
+    scheme = "http" if hostname == "localhost" or hostname.endswith(".localhost") else "https"
+    return f"{scheme}://{domain}"
+
+
 def notify_tenant_registered(tenant, request=None):
-    workspace_url = tenant.get("workspace_url") or (f"https://{tenant.get('domain')}" if tenant.get("domain") else "")
-    login_url = f"{workspace_url.rstrip('/')}/login" if workspace_url else (f"{public_base_url(request).rstrip('/')}/login" if request else "/login")
+    workspace_url = _tenant_workspace_url(tenant)
+    login_url = workspace_url or (public_base_url(request).rstrip("/") if request else "/")
     send_system_email(
         "Your Expressnetbilling workspace is ready",
         (
@@ -410,11 +418,16 @@ def notify_tenant_registered(tenant, request=None):
     )
 
 
-def _tenant_registration_login_url(tenant, fallback=""):
+def _tenant_workspace_url(tenant):
+    subdomain = str(tenant.get("subdomain") or "").strip()
+    if subdomain:
+        return tenant_portal_url(subdomain)
     workspace_url = tenant.get("workspace_url") or (f"https://{tenant.get('domain')}" if tenant.get("domain") else "")
-    if workspace_url:
-        return f"{workspace_url.rstrip('/')}/login"
-    return fallback or "/login"
+    return workspace_url.rstrip("/") if workspace_url else ""
+
+
+def _tenant_registration_login_url(tenant, fallback=""):
+    return _tenant_workspace_url(tenant) or fallback or "/"
 
 
 def send_tenant_registration_notifications_async(tenant_id, tenant, login_url):
@@ -428,7 +441,7 @@ def send_tenant_registration_notifications_async(tenant_id, tenant, login_url):
                     f"Hello {tenant.get('owner_name') or tenant.get('business_name')},\n\n"
                     f"Your {tenant.get('business_name') or 'Expressnetbilling'} workspace has been created.\n\n"
                     f"Subdomain: {tenant.get('subdomain')}\n"
-                    f"Workspace URL: {tenant.get('workspace_url')}\n"
+                    f"Workspace URL: {workspace_login_url}\n"
                     f"Sign in: {workspace_login_url}\n\n"
                     "Use the email and password you provided during registration to sign in."
                 ),
@@ -891,7 +904,7 @@ def auth_register(request):
     while Tenant.objects.filter(extra__subdomain=slug).exists():
         slug = f"{base_slug}-{suffix}"
         suffix += 1
-    workspace_url = f"https://{tenant_portal_domain(slug)}"
+    workspace_url = tenant_portal_url(slug)
 
     try:
         tenant_ref = ref("tenants").push(
@@ -933,7 +946,7 @@ def auth_register(request):
     tenant_instance = Tenant.objects.filter(pk=tenant_ref.key).first()
     if tenant_instance:
         ensure_subscription(tenant_instance, data.get("plan") or "basic")
-    login_url = f"{workspace_url.rstrip('/')}/login"
+    login_url = workspace_url.rstrip("/")
     send_tenant_registration_notifications_async(tenant_ref.key, tenant_data, login_url)
     return ok({"success": True, "message": "You have been successfully registered. Check your email for verification and your tenant subdomain.", "tenantId": tenant_ref.key, "subdomain": tenant_data.get("subdomain"), "domain": tenant_data.get("domain"), "workspaceUrl": tenant_data.get("workspace_url")})
 

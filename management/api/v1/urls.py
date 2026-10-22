@@ -11,6 +11,8 @@ urlpatterns = [
     path("customers/<str:customer_id>", views.customers),
     path("customers/<str:customer_id>/renew", views.customer_renew),
     path("payments", views.payments),
+    path("payments/withdrawals", views.paystack_withdrawals),
+    path("payments/withdrawals/<str:withdrawal_id>/otp", views.paystack_withdrawal_otp),
     path("invoices", views.invoices),
     path("invoices/<str:invoice_id>", views.invoices),
     path("payments/pay", views.payments),

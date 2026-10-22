@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Link } from 'react-router-dom';
 import { CheckCircle2, X } from 'lucide-react';
 import api from '../api/axios';
+import { appLoginUrl } from '../config/hostRouting';
 
 const initialForm = {
   business_name: '',
@@ -100,9 +100,9 @@ export default function Register() {
           <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-600">
               Already registered?{' '}
-              <Link className="font-semibold text-blue-600 hover:text-blue-700" to="/login">
+              <a className="font-semibold text-blue-600 hover:text-blue-700" href={appLoginUrl()}>
                 Login
-              </Link>
+              </a>
             </p>
             <button type="submit" className="btn-primary" disabled={loading}>
               {loading ? 'Creating account...' : 'Create account'}

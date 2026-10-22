@@ -16,7 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import { useAdminAuth } from '../../context/AdminAuthContext';
 import { adminLoginUrl, adminPath } from '../../config/adminPaths';
 
@@ -34,11 +34,10 @@ const links = [
 export default function AdminLayout() {
   const [open, setOpen] = useState(false);
   const { admin, logoutAdmin } = useAdminAuth();
-  const navigate = useNavigate();
 
   const logout = () => {
     logoutAdmin();
-    navigate(adminLoginUrl(), { replace: true });
+    window.location.assign(adminLoginUrl());
   };
 
   const navClass = ({ isActive }) =>

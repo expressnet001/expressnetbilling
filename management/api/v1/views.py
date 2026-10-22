@@ -33,7 +33,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
 from billing_api.auth import admin_required, tenant_required
-from billing_api.models import AdminUser, Customer, InternetPackage, Payment, SubscriptionPayment, Tenant, TenantSubscription, Ticket, User
+from billing_api.models import AdminUser, Customer, InternetPackage, Payment, PaystackWithdrawal, SubscriptionPayment, Tenant, TenantSubscription, Ticket, User
 from billing_api.services import (
     admin_token,
     check_password,
@@ -43,8 +43,11 @@ from billing_api.services import (
     selected_daraja_method,
     initiate_daraja_payment,
     initiate_paystack_mpesa_stk,
-    create_paystack_subaccount,
-    fetch_paystack_subaccount,
+    create_paystack_transfer_recipient,
+    get_paystack_balance,
+    initiate_paystack_transfer,
+    finalize_paystack_transfer,
+    verify_paystack_transfer,
     list_paystack_banks,
     tenant_paystack_platform_fee_percent,
     verify_paystack_transaction,
@@ -655,7 +658,9 @@ def tenant_theme_payload(tenant):
         "bank_account_number": tenant.get("bank_account_number") or "",
         "payment_methods": tenant.get("payment_methods") if isinstance(tenant.get("payment_methods"), list) else ["daraja_paybill"],
         "paystack_bearer": tenant.get("paystack_bearer") or "account",
-        "bank_account_status": tenant.get("paystack_settlement_status") or ("ready" if tenant.get("paystack_subaccount_code") else "not_configured"),
+        "bank_account_status": "withdrawal_ready" if (tenant.get("bank_code") and tenant.get("bank_account_number")) or tenant_payout_details(tenant).get("payout_phone") else "missing_payout_details",
+        "paystack_payout_model": "pooled_withdrawals",
+        "paystack_manual_payouts_enabled": str(os.getenv("PAYSTACK_MANUAL_PAYOUTS_ENABLED", "false")).strip().lower() in {"1", "true", "yes", "on"},
         "daraja_consumer_key": tenant.get("daraja_consumer_key") or "",
         "daraja_consumer_secret": tenant.get("daraja_consumer_secret") or "",
         "daraja_shortcode": tenant.get("daraja_shortcode") or "",
@@ -663,7 +668,7 @@ def tenant_theme_payload(tenant):
         "daraja_till_number": tenant.get("daraja_till_number") or "",
         "daraja_shortcode_type": tenant.get("daraja_shortcode_type") or "CustomerPayBillOnline",
         "daraja_environment": tenant.get("daraja_environment") or "production",
-        "settlement_status": tenant.get("paystack_settlement_status") or tenant.get("settlement_status") or ("ready" if tenant_payout_details(tenant).get("payout_phone") else "missing_payout_details"),
+        "settlement_status": "withdrawal_ready" if (tenant.get("bank_code") and tenant.get("bank_account_number")) or tenant_payout_details(tenant).get("payout_phone") else "missing_payout_details",
         "settlement_pending_amount": float(tenant.get("settlement_pending_amount") or 0),
     }
 
@@ -873,8 +878,11 @@ def _public_pay_impl(request, tenant_id):
 
 
 def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_type, customer, access_username, pending_access_password, mac_address, router_ip, router_client_ip, router_client_mac, router_mac, link_login, dst, amount_payable):
+    if str(os.getenv("PAYSTACK_MANUAL_PAYOUTS_ENABLED", "false")).strip().lower() not in {"1", "true", "yes", "on"}:
+        return ok({"success": False, "message": "Paystack withdrawals are not enabled yet. The platform owner must enable manual payouts with Paystack before accepting pooled payments."}, 503)
     reference = f"EN-{tenant_id}-{secrets.token_urlsafe(14)}".replace("_", "-")
     currency = str(os.getenv("PAYSTACK_CURRENCY") or ((ref("site_settings").get() or {}).get("paystack_currency")) or "KES").upper()
+    platform_fee_percent = tenant_paystack_platform_fee_percent()
     payment_ref = ref(f"tenants/{tenant_id}/payments").push({
         "customer_id": customer.get("id") if customer else None,
         "customer_name": customer.get("name") if customer else None,
@@ -886,6 +894,8 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
         "router_ip": router_ip, "router_client_ip": router_client_ip, "router_client_mac": router_client_mac,
         "router_mac": router_mac, "link_login": link_login, "dst": dst, "source": "customer_portal",
         "provider": "paystack", "payment_method": "paystack", "currency": currency,
+        "payout_model": "pooled", "platform_fee_percent": platform_fee_percent,
+        "collection_account": "platform_paystack", "tenant_settlement_status": "pending_withdrawal",
         "tenant_id": str(tenant_id),
         "paystack_reference": reference,
     })
@@ -900,16 +910,10 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
             # asks the customer for their phone number.
             email_hash = hashlib.sha256(reference.encode("utf-8")).hexdigest()[:20]
             email = f"checkout-{email_hash}@payments.invalid"
-        tenant = _ensure_tenant_paystack_subaccount(tenant_id, tenant)
-        subaccount = str(tenant.get("paystack_subaccount_code") or "").strip()
-        if not subaccount or tenant.get("paystack_settlement_status") != "ready":
-            if tenant.get("paystack_settlement_status") == "pending_verification":
-                raise PaymentProviderError("This tenant's Paystack subaccount must be verified in the Paystack Dashboard before payments can be accepted. Paystack holds the first payout until verification.", "Paystack subaccount requires verification", 400)
-            raise PaymentProviderError("Bank account setup is not complete for this tenant. The tenant must save a valid bank account before Paystack payments can be accepted.", "Bank account not ready", 400)
         metadata = {"kind": "internet_payment", "tenant_id": str(tenant_id), "payment_id": str(payment_ref.key)}
         charge_attempted = True
-        charge = initiate_paystack_mpesa_stk(email=email, amount=amount_payable, phone=phone, reference=reference, currency=currency, subaccount=subaccount, bearer=tenant.get("paystack_bearer") or "account", metadata=metadata)
-        payment_ref.update({"paystack_reference": charge.get("reference") or reference, "paystack_charge_status": charge.get("status") or "", "paystack_display_text": charge.get("display_text") or "", "collection_account": "tenant_paystack", "tenant_settlement_status": "paystack_subaccount", "tenant_paystack_subaccount_code": subaccount, "payment_method": "paystack_mpesa_stk", "customer_message": charge.get("display_text") or "Approve the M-Pesa prompt on your phone to complete payment."})
+        charge = initiate_paystack_mpesa_stk(email=email, amount=amount_payable, phone=phone, reference=reference, currency=currency, metadata=metadata)
+        payment_ref.update({"paystack_reference": charge.get("reference") or reference, "paystack_charge_status": charge.get("status") or "", "paystack_display_text": charge.get("display_text") or "", "collection_account": "platform_paystack", "tenant_settlement_status": "pending_withdrawal", "payment_method": "paystack_mpesa_stk", "customer_message": charge.get("display_text") or "Approve the M-Pesa prompt on your phone to complete payment."})
         _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
         return ok({"success": True, "message": charge.get("display_text") or "Approve the M-Pesa payment prompt on your phone.", "paymentId": payment_ref.key, "verifyToken": access_token, "provider": "paystack", "paymentMethod": "mpesa_stk", "reference": charge.get("reference") or reference}, 201)
     except PaymentProviderError as exc:
@@ -929,53 +933,6 @@ def _public_paystack_impl(request, tenant_id, tenant, pkg, data, phone, service_
         payment_ref.update({"paystack_charge_status": "initiation_unknown", "customer_message": "Payment prompt status is being checked. Do not start another payment yet."})
         _upsert_sql_paystack_payment(tenant_id, payment_ref.key, payment_ref.get())
         return ok({"success": True, "status": "pending", "message": payment_ref.get().get("customer_message"), "paymentId": payment_ref.key, "verifyToken": access_token, "provider": "paystack", "paymentMethod": "mpesa_stk", "reference": reference}, 202)
-
-
-def _ensure_tenant_paystack_subaccount(tenant_id, tenant):
-    """Create and persist a tenant's Paystack subaccount when Paystack is the active collection method."""
-    with transaction.atomic():
-        tenant_record = Tenant.objects.select_for_update().get(pk=tenant_id)
-        current = tenant_record.as_dict()
-        existing_code = str(current.get("paystack_subaccount_code") or "").strip()
-        if existing_code:
-            existing = fetch_paystack_subaccount(existing_code)
-            if existing and existing.get("active"):
-                status = "ready" if existing.get("is_verified") else "pending_verification"
-                updates = {
-                    "paystack_settlement_status": status,
-                    "paystack_settlement_bank": existing.get("settlement_bank") or current.get("paystack_settlement_bank") or current.get("bank_code") or "",
-                    "paystack_settlement_account_name": existing.get("account_name") or current.get("paystack_settlement_account_name") or "",
-                }
-                if any(current.get(key) != value for key, value in updates.items()):
-                    tenant_record.apply_data(updates)
-                    tenant_record.save()
-                return {**tenant, **current, **updates}
-            # The provider-side account was removed or deactivated. Clear the
-            # stale local code so the normal creation flow can make a fresh one.
-            current["paystack_subaccount_code"] = ""
-            current["paystack_settlement_status"] = "not_configured"
-        if not current.get("bank_code") or not current.get("bank_account_number"):
-            raise PaymentProviderError(
-                "This tenant must select a bank and save its bank account number before Paystack can create a subaccount.",
-                "Missing tenant bank details",
-                400,
-            )
-        merged = {**tenant, **current}
-        subaccount = create_paystack_subaccount(
-            tenant=merged,
-            percentage_charge=tenant_paystack_platform_fee_percent(),
-        )
-        updates = {
-            "paystack_subaccount_code": subaccount["subaccount_code"],
-            "paystack_settlement_bank": subaccount.get("settlement_bank") or merged.get("bank_code") or "",
-            "paystack_settlement_account_name": subaccount.get("account_name") or "",
-            "paystack_settlement_status": "ready" if subaccount.get("active") and subaccount.get("is_verified") else ("pending_verification" if subaccount.get("active") else "pending"),
-        }
-        tenant_record.apply_data(updates)
-        tenant_record.save()
-        return {**merged, **updates}
-
-
 
 
 @csrf_exempt
@@ -1168,9 +1125,24 @@ def complete_paystack_payment(tenant_id, payment_id, transaction):
             return False
         code = str(transaction.get("id") or transaction.get("reference") or payment_id)
         paid_at = transaction.get("paid_at") or iso_now()
-        payment_ref.update({"status": "success", "payment_code": code, "paid_at": paid_at, "paystack_transaction_id": str(transaction.get("id") or ""), "paystack_paid_at": paid_at, "paystack_channel": transaction.get("channel") or "", "customer_message": "Payment confirmed by Paystack"})
+        payout_fields = {}
+        if payment.get("payout_model") == "pooled":
+            gross = Decimal(str(transaction.get("amount") or 0)) / Decimal("100")
+            processing_fee = Decimal(str(transaction.get("fees") or 0)) / Decimal("100")
+            platform_percent = Decimal(str(payment.get("platform_fee_percent") or 0))
+            platform_fee = (gross * platform_percent / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            tenant_net = max(Decimal("0.00"), gross - processing_fee - platform_fee).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            payout_fields = {
+                "payout_model": "pooled",
+                "collection_account": "platform_paystack",
+                "tenant_settlement_status": "pending_withdrawal",
+                "paystack_processing_fee": str(processing_fee),
+                "platform_fee_amount": str(platform_fee),
+                "tenant_payout_amount": str(tenant_net),
+            }
+        payment_ref.update({"status": "success", "payment_code": code, "paid_at": paid_at, "paystack_transaction_id": str(transaction.get("id") or ""), "paystack_paid_at": paid_at, "paystack_channel": transaction.get("channel") or "", "customer_message": "Payment confirmed by Paystack", **payout_fields})
         payment = payment_ref.get() or payment
-        payment = {**payment, "status": "success", "payment_code": code, "paid_at": paid_at, "paystack_transaction_id": str(transaction.get("id") or ""), "paystack_paid_at": paid_at, "paystack_channel": transaction.get("channel") or ""}
+        payment = {**payment, "status": "success", "payment_code": code, "paid_at": paid_at, "paystack_transaction_id": str(transaction.get("id") or ""), "paystack_paid_at": paid_at, "paystack_channel": transaction.get("channel") or "", **payout_fields}
         _upsert_sql_paystack_payment(tenant_id, payment_id, payment)
         tenant = {"id": tenant_id, **(ref(f"tenants/{tenant_id}").get() or {})}
         try:
@@ -1223,7 +1195,24 @@ def paystack_webhook(request):
         event = json.loads(request.body.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return ok({"message": "Invalid payload"}, 400)
-    if event.get("event") != "charge.success":
+    event_name = str(event.get("event") or "")
+    if event_name in {"transfer.success", "transfer.failed", "transfer.reversed"}:
+        transfer_data = event.get("data") or {}
+        transfer_reference = str(transfer_data.get("reference") or "").strip()
+        withdrawal = PaystackWithdrawal.objects.filter(reference=transfer_reference).first()
+        if withdrawal:
+            if event_name == "transfer.success":
+                withdrawal.status = "success"
+                withdrawal.failure_reason = ""
+            else:
+                withdrawal.status = "reversed" if event_name == "transfer.reversed" else "failed"
+                withdrawal.failure_reason = str(transfer_data.get("reason") or transfer_data.get("message") or event_name.replace("transfer.", "").capitalize())
+            withdrawal.transfer_code = str(transfer_data.get("transfer_code") or withdrawal.transfer_code)
+            withdrawal.save()
+        else:
+            logger.info("Paystack transfer webhook has no matching withdrawal reference=%s event=%s", transfer_reference, event_name)
+        return ok({"success": True})
+    if event_name != "charge.success":
         return ok({"success": True})
     reference = str((event.get("data") or {}).get("reference") or "")
     try:
@@ -1940,6 +1929,210 @@ def staff_requisitions(request):
     items[new_id] = item
     _save_tenant_extra_dict(tenant_id, "requisitions", items)
     return ok({"success": True, "message": "Requisition created", "requisition": {"id": new_id, **item}}, 201)
+
+
+@csrf_exempt
+@api_view(["GET", "POST"])
+@tenant_required
+def paystack_withdrawals(request):
+    tenant_id = request.tenant["id"]
+    manual_payouts_enabled = str(os.getenv("PAYSTACK_MANUAL_PAYOUTS_ENABLED", "false")).strip().lower() in {"1", "true", "yes", "on"}
+    platform_default = str((ref("site_settings").get() or {}).get("collection_provider") or "daraja")
+    if selected_collection_provider(request.tenant, platform_default=platform_default) != "paystack":
+        return ok({"message": "Withdrawals are available only when this tenant uses Paystack. Daraja payments are unchanged."}, 400)
+
+    def wallet_summary():
+        paystack_payments = Payment.objects.filter(tenant_id=tenant_id, provider="paystack", status="success")
+        credits = Decimal("0.00")
+        for item in paystack_payments.only("extra"):
+            extra = item.extra or {}
+            if extra.get("payout_model") == "pooled":
+                try:
+                    credits += Decimal(str(extra.get("tenant_payout_amount") or "0"))
+                except Exception:
+                    continue
+        reserved = PaystackWithdrawal.objects.filter(
+            tenant_id=tenant_id,
+            status__in=["initiating", "unknown", "otp", "processing", "success"],
+        ).aggregate(total=Sum("amount"), fees=Sum("fee"))
+        reserved_total = Decimal(str(reserved.get("total") or 0)) + Decimal(str(reserved.get("fees") or 0))
+        return max(Decimal("0.00"), credits - reserved_total).quantize(Decimal("0.01"))
+
+    if method(request, "GET"):
+        for pending_item in PaystackWithdrawal.objects.filter(
+            tenant_id=tenant_id, status__in=["unknown", "processing"]
+        )[:5]:
+            try:
+                provider_transfer = verify_paystack_transfer(pending_item.reference)
+                provider_status = str(provider_transfer.get("status") or "").lower()
+                if provider_status == "success":
+                    pending_item.status = "success"
+                    pending_item.failure_reason = ""
+                elif provider_status in {"failed", "reversed"}:
+                    pending_item.status = provider_status
+                    pending_item.failure_reason = str(provider_transfer.get("reason") or provider_status.capitalize())
+                elif provider_status in {"pending", "otp"}:
+                    pending_item.status = provider_status
+                    pending_item.transfer_code = str(provider_transfer.get("transfer_code") or pending_item.transfer_code)
+                pending_item.save()
+            except PaymentProviderError as exc:
+                logger.info("Paystack withdrawal status refresh deferred id=%s detail=%s", pending_item.pk, exc.detail)
+        withdrawals = PaystackWithdrawal.objects.filter(tenant_id=tenant_id)[:20]
+        return ok({
+            "currency": "KES",
+            "available_balance": str(wallet_summary()),
+            "withdrawal_fee": str(Decimal(os.getenv("PAYSTACK_WITHDRAWAL_FEE_KES", "80"))),
+            "manual_payouts_enabled": manual_payouts_enabled,
+            "withdrawals": [item.as_dict() for item in withdrawals],
+        })
+
+    if not manual_payouts_enabled:
+        return ok({"message": "Paystack manual payouts must be enabled by Paystack and PAYSTACK_MANUAL_PAYOUTS_ENABLED must be set before withdrawals can be submitted."}, 503)
+
+    data = body(request)
+    try:
+        amount = Decimal(str(data.get("amount") or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        return ok({"message": "Enter a valid withdrawal amount."}, 400)
+    if amount < Decimal("10.00"):
+        return ok({"message": "The minimum Paystack withdrawal is Ksh 10."}, 400)
+    payout_method = str(data.get("payout_method") or "").strip().lower()
+    if payout_method not in {"bank", "mpesa"}:
+        return ok({"message": "Choose a bank account or M-Pesa."}, 400)
+    if payout_method == "mpesa" and amount > Decimal("250000.00"):
+        return ok({"message": "The maximum single Paystack M-Pesa withdrawal is Ksh 250,000."}, 400)
+    tenant = {**request.tenant}
+    recipient_name = str(data.get("recipient_name") or tenant.get("owner_name") or tenant.get("business_name") or "").strip()
+    if not recipient_name:
+        return ok({"message": "Enter the recipient account name."}, 400)
+    bank_code = ""
+    account_number = ""
+    phone = ""
+    if payout_method == "bank":
+        destination_type = str(data.get("destination_type") or "other_bank").strip().lower()
+        if destination_type == "saved_bank":
+            bank_code = str(tenant.get("bank_code") or "").strip()
+            account_number = str(tenant.get("bank_account_number") or "").strip()
+        else:
+            bank_code = str(data.get("bank_code") or "").strip()
+            account_number = "".join(ch for ch in str(data.get("account_number") or "") if ch.isalnum())
+        if not bank_code or len(account_number) < 5:
+            return ok({"message": "Select a bank and enter a valid account number."}, 400)
+        destination_label = f"Bank ••••{account_number[-4:]}"
+    else:
+        phone = normalize_phone(data.get("phone") or tenant.get("payout_phone") or "")
+        if len(phone) != 12 or not phone.startswith("254"):
+            return ok({"message": "Enter a valid Kenyan M-Pesa number."}, 400)
+        account_number = phone
+        destination_label = f"M-Pesa ••••{phone[-4:]}"
+
+    fee = Decimal(os.getenv("PAYSTACK_WITHDRAWAL_FEE_KES", "80")).quantize(Decimal("0.01"))
+    if fee < 0:
+        fee = Decimal("0.00")
+    try:
+        with transaction.atomic():
+            tenant_lock = Tenant.objects.select_for_update().get(pk=tenant_id)
+            tenant = {**request.tenant, **tenant_lock.as_dict()}
+            if PaystackWithdrawal.objects.filter(tenant=tenant_lock, status="unknown").exists():
+                return ok({"message": "A previous withdrawal is still being verified. Check its status before submitting another."}, 409)
+            available = wallet_summary()
+            if amount + fee > available:
+                return ok({
+                    "message": f"Insufficient Paystack balance. Available: Ksh {available:.2f}; withdrawal plus fee: Ksh {amount + fee:.2f}.",
+                    "available_balance": str(available),
+                }, 400)
+            withdrawal = PaystackWithdrawal.objects.create(
+                tenant=tenant_lock,
+                amount=amount,
+                fee=fee,
+                currency="KES",
+                payout_method=payout_method,
+                destination_label=destination_label,
+                reference=f"wd_{secrets.token_hex(16)}",
+            )
+    except Tenant.DoesNotExist:
+        return ok({"message": "Tenant account not found."}, 404)
+
+    try:
+        recipient = create_paystack_transfer_recipient(
+            payout_method=payout_method,
+            name=recipient_name,
+            email=str(tenant.get("email") or ""),
+            currency="KES",
+            bank_code=bank_code,
+            account_number=account_number,
+        )
+        recipient_code = str(recipient.get("recipient_code") or "")
+        if not recipient_code:
+            raise PaymentProviderError("Paystack did not return a transfer recipient.", "Missing recipient_code", 502)
+        withdrawal.recipient_code = recipient_code
+        withdrawal.save(update_fields=["recipient_code", "updated_at"])
+        required_balance = int(((amount + fee) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        provider_balance = get_paystack_balance("KES")
+        if provider_balance < required_balance:
+            withdrawal.status = "failed"
+            withdrawal.failure_reason = "Paystack balance is not sufficient. Manual payouts must be enabled and funds must be available."
+            withdrawal.save(update_fields=["status", "failure_reason", "updated_at"])
+            return ok({"message": withdrawal.failure_reason}, 400)
+        transfer = initiate_paystack_transfer(
+            amount=amount,
+            recipient_code=recipient_code,
+            reference=withdrawal.reference,
+            reason=f"Tenant withdrawal {tenant.get('business_name') or tenant_id}",
+            currency="KES",
+        )
+        transfer_status = str(transfer.get("status") or "pending").lower()
+        withdrawal.transfer_code = str(transfer.get("transfer_code") or "")
+        withdrawal.status = "otp" if transfer_status == "otp" else "success" if transfer_status == "success" else "processing" if transfer_status in {"pending", "queued"} else "failed"
+        if withdrawal.status == "failed":
+            withdrawal.failure_reason = str(transfer.get("reason") or transfer.get("message") or "Paystack transfer failed.")
+        withdrawal.save()
+        return ok({
+            "success": withdrawal.status in {"otp", "processing", "success"},
+            "otp_required": withdrawal.status == "otp",
+            "message": "Paystack OTP is required to continue this withdrawal." if withdrawal.status == "otp" else "Withdrawal submitted to Paystack." if withdrawal.status in {"processing", "success"} else withdrawal.failure_reason,
+            "withdrawal": withdrawal.as_dict(),
+            "available_balance": str(wallet_summary()),
+        }, 202 if withdrawal.status in {"otp", "processing", "success"} else 502)
+    except PaymentProviderError as exc:
+        # Preserve funds for indeterminate network outcomes until verified.
+        if "Check the withdrawal status" in exc.public_message:
+            withdrawal.status = "unknown"
+        else:
+            withdrawal.status = "failed"
+            withdrawal.failure_reason = exc.public_message
+        withdrawal.save(update_fields=["status", "failure_reason", "updated_at"])
+        return ok({"message": exc.public_message, "withdrawal": withdrawal.as_dict()}, 202 if withdrawal.status == "unknown" else exc.status_code)
+    except Exception:
+        logger.exception("Paystack withdrawal failed tenant=%s withdrawal=%s", tenant_id, withdrawal.pk)
+        withdrawal.status = "unknown"
+        withdrawal.failure_reason = "Paystack status is being checked. Do not submit this withdrawal again yet."
+        withdrawal.save(update_fields=["status", "failure_reason", "updated_at"])
+        return ok({"message": withdrawal.failure_reason, "withdrawal": withdrawal.as_dict()}, 202)
+
+
+@csrf_exempt
+@api_view(["POST"])
+@tenant_required
+def paystack_withdrawal_otp(request, withdrawal_id):
+    withdrawal = PaystackWithdrawal.objects.filter(pk=withdrawal_id, tenant_id=request.tenant["id"]).first()
+    if not withdrawal:
+        return ok({"message": "Withdrawal not found."}, 404)
+    if withdrawal.status != "otp" or not withdrawal.transfer_code:
+        return ok({"message": "This withdrawal is not waiting for an OTP."}, 400)
+    otp = str(body(request).get("otp") or "").strip()
+    if not otp:
+        return ok({"message": "Enter the Paystack transfer OTP."}, 400)
+    try:
+        result = finalize_paystack_transfer(transfer_code=withdrawal.transfer_code, otp=otp)
+        provider_status = str(result.get("status") or "pending").lower()
+        withdrawal.status = "success" if provider_status == "success" else "processing" if provider_status in {"pending", "queued"} else "failed"
+        if withdrawal.status == "failed":
+            withdrawal.failure_reason = str(result.get("reason") or "Paystack transfer failed.")
+        withdrawal.save()
+        return ok({"success": withdrawal.status != "failed", "withdrawal": withdrawal.as_dict(), "message": withdrawal.failure_reason or "Withdrawal submitted to Paystack."})
+    except PaymentProviderError as exc:
+        return ok({"message": exc.public_message}, exc.status_code)
 
 
 @csrf_exempt
@@ -2718,24 +2911,7 @@ def request_payment_change_code(request):
 def settings_business(request):
     tenant_id = request.tenant["id"]
     if method(request, "GET"):
-        tenant = dict(request.tenant)
-        subaccount_code = str(tenant.get("paystack_subaccount_code") or "").strip()
-        if subaccount_code:
-            try:
-                subaccount = fetch_paystack_subaccount(subaccount_code)
-                if subaccount and subaccount.get("active"):
-                    status = "ready" if subaccount.get("is_verified") else "pending_verification"
-                    if tenant.get("paystack_settlement_status") != status:
-                        tenant["paystack_settlement_status"] = status
-                        tenant_record = Tenant.objects.filter(pk=tenant_id).first()
-                        if tenant_record:
-                            tenant_record.apply_data({"paystack_settlement_status": status})
-                            tenant_record.save()
-                elif subaccount is None:
-                    tenant["paystack_settlement_status"] = "not_configured"
-            except PaymentProviderError as exc:
-                logger.info("Could not refresh Paystack subaccount status tenant=%s detail=%s", tenant_id, exc.detail)
-        return ok(tenant_theme_payload(tenant))
+        return ok(tenant_theme_payload(request.tenant))
 
     data = body(request)
     allowed = [
@@ -2823,52 +2999,6 @@ def settings_business(request):
                 updates[field] = "sandbox" if value == "sandbox" else "production"
             else:
                 updates[field] = str(data[field]).strip()
-    bank_details_changed = any(
-        field in updates and str(updates[field]).strip() != str(request.tenant.get(field) or "").strip()
-        for field in ("bank_code", "bank_account_number")
-    )
-    merged_for_paystack = {**request.tenant, **updates}
-    platform_default_provider = str((ref("site_settings").get() or {}).get("collection_provider") or "daraja").strip().lower()
-    paystack_selected = (
-        "paystack" in (merged_for_paystack.get("payment_methods") or [])
-        or merged_for_paystack.get("payment_provider") == "paystack"
-        or platform_default_provider == "paystack"
-    )
-    existing_subaccount_code = str(merged_for_paystack.get("paystack_subaccount_code") or "").strip()
-    if paystack_selected and existing_subaccount_code and not bank_details_changed:
-        try:
-            existing_subaccount = fetch_paystack_subaccount(existing_subaccount_code)
-            if not existing_subaccount or not existing_subaccount.get("active"):
-                updates["paystack_subaccount_code"] = ""
-                updates["paystack_settlement_account_name"] = ""
-                updates["paystack_settlement_status"] = "not_configured"
-                merged_for_paystack = {**request.tenant, **updates}
-            else:
-                updates["paystack_settlement_status"] = "ready" if existing_subaccount.get("is_verified") else "pending_verification"
-        except PaymentProviderError as exc:
-            return ok({"message": exc.public_message, "settlement_status": "setup_failed"}, exc.status_code)
-    if bank_details_changed:
-        updates["paystack_subaccount_code"] = ""
-        updates["paystack_settlement_account_name"] = ""
-        updates["paystack_settlement_status"] = "not_configured"
-        merged_for_paystack = {**request.tenant, **updates}
-    if (
-        paystack_selected
-        and merged_for_paystack.get("bank_code")
-        and merged_for_paystack.get("bank_account_number")
-        and not merged_for_paystack.get("paystack_subaccount_code")
-    ):
-        try:
-            subaccount = create_paystack_subaccount(tenant={"id": str(tenant_id), **merged_for_paystack}, percentage_charge=tenant_paystack_platform_fee_percent())
-            updates["paystack_subaccount_code"] = subaccount["subaccount_code"]
-            updates["paystack_settlement_bank"] = subaccount.get("settlement_bank") or merged_for_paystack.get("bank_code") or ""
-            updates["paystack_settlement_account_name"] = subaccount.get("account_name") or ""
-            updates["paystack_settlement_status"] = "ready" if subaccount.get("active") and subaccount.get("is_verified") else ("pending_verification" if subaccount.get("active") else "pending")
-        except PaymentProviderError as exc:
-            return ok({"message": exc.public_message, "settlement_status": "setup_failed"}, exc.status_code)
-        except Exception:
-            logger.exception("Unexpected Paystack bank account setup failure tenant=%s", tenant_id)
-            return ok({"message": "Paystack bank account setup failed unexpectedly. Please retry; if it continues, check the server log for the error details.", "settlement_status": "setup_failed"}, 502)
     if updates.get("theme_mode") not in {None, "light", "dark", "system"}:
         updates["theme_mode"] = "dark"
     if "theme_mode" in updates:
@@ -2879,20 +3009,10 @@ def settings_business(request):
 
     merged = {**request.tenant, **updates}
     updates.setdefault("payment_provider", "mpesa")
-    updates["settlement_status"] = "ready" if (
-        tenant_payout_details(merged).get("payout_phone")
-        or (
-            "paystack" in (merged.get("payment_methods") or [])
-            and bool(merged.get("bank_code") and merged.get("bank_account_number"))
-            and merged.get("paystack_settlement_status") == "ready"
-        )
-    ) else (
-        "pending_verification"
-        if "paystack" in (merged.get("payment_methods") or [])
-        and bool(merged.get("bank_code") and merged.get("bank_account_number"))
-        and merged.get("paystack_settlement_status") == "pending_verification"
-        else "missing_payout_details"
-    )
+    updates["settlement_status"] = "withdrawal_ready" if (
+        (merged.get("bank_code") and merged.get("bank_account_number"))
+        or tenant_payout_details(merged).get("payout_phone")
+    ) else "missing_payout_details"
 
     merged = {**request.tenant, **updates}
     if not ("paystack_settlement_status" in updates and updates["paystack_settlement_status"] == "not_configured"):
@@ -3289,6 +3409,11 @@ def _upsert_sql_paystack_payment(tenant_id, payment_id, payment_data):
             "tenant_settlement_status": payment_data.get("tenant_settlement_status"),
             "collection_account": payment_data.get("collection_account"),
             "tenant_paystack_subaccount_code": payment_data.get("tenant_paystack_subaccount_code"),
+            "payout_model": payment_data.get("payout_model"),
+            "platform_fee_percent": payment_data.get("platform_fee_percent"),
+            "paystack_processing_fee": payment_data.get("paystack_processing_fee"),
+            "platform_fee_amount": payment_data.get("platform_fee_amount"),
+            "tenant_payout_amount": payment_data.get("tenant_payout_amount"),
             "access_error": payment_data.get("access_error"),
             "last_synced_at": iso_now(),
         })

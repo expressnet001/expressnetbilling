@@ -268,6 +268,40 @@ class Payment(ExtraFieldsModel):
         return data
 
 
+class PaystackWithdrawal(models.Model):
+    tenant = models.ForeignKey(Tenant, related_name="paystack_withdrawals", on_delete=models.CASCADE)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    fee = models.DecimalField(max_digits=10, decimal_places=2, default=80)
+    currency = models.CharField(max_length=10, default="KES")
+    payout_method = models.CharField(max_length=24)
+    destination_label = models.CharField(max_length=180, blank=True, default="")
+    recipient_code = models.CharField(max_length=80, blank=True, default="")
+    reference = models.CharField(max_length=64, unique=True)
+    transfer_code = models.CharField(max_length=100, blank=True, default="")
+    status = models.CharField(max_length=24, default="initiating")
+    failure_reason = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def as_dict(self):
+        return {
+            "id": str(self.pk),
+            "amount": str(self.amount),
+            "fee": str(self.fee),
+            "currency": self.currency,
+            "payout_method": self.payout_method,
+            "destination_label": self.destination_label,
+            "reference": self.reference,
+            "transfer_code": self.transfer_code,
+            "status": self.status,
+            "failure_reason": self.failure_reason,
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+        }
+
+
 class AdminUser(ExtraFieldsModel):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,

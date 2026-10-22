@@ -43,8 +43,11 @@ import StaffRequisitions from './pages/StaffRequisitions';
 import StaffTasks from './pages/StaffTasks';
 import Tr069 from './pages/Tr069';
 import Vouchers from './pages/Vouchers';
-import { ADMIN_DASHBOARD_PATH, ADMIN_LOGIN_PATH, ADMIN_PATH, adminPath, isAdminHost } from './config/adminPaths';
+import { ADMIN_DASHBOARD_PATH, ADMIN_PATH, adminPath } from './config/adminPaths';
 import { TENANT_THEME_EVENT, applyTenantTheme } from './utils/theme';
+import { isAdminHost, isAppHost, isTenantHost } from './config/hostRouting';
+import { useAuth } from './context/AuthContext';
+import { useAdminAuth } from './context/AdminAuthContext';
 
 function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -111,15 +114,18 @@ function DashboardLayout() {
 }
 
 export default function App() {
-  const hostname = window.location.hostname.toLowerCase();
-  const appSubdomain = String(import.meta.env.VITE_APP_SUBDOMAIN || 'app').trim().toLowerCase();
   const onAdminHost = isAdminHost();
-  const isAppHost = hostname === appSubdomain || hostname.startsWith(`${appSubdomain}.`);
+  const tenantHost = isTenantHost() || isAppHost();
+  const { isAuthenticated } = useAuth();
+  const { isAdminAuthenticated } = useAdminAuth();
 
   return (
     <Routes>
-      <Route path="/" element={onAdminHost ? <AdminLogin /> : isAppHost ? <Login /> : <Home />} />
-      <Route path="/login" element={onAdminHost ? <AdminLogin /> : <Login />} />
+      <Route path="/" element={onAdminHost
+        ? (isAdminAuthenticated ? <Navigate to={ADMIN_DASHBOARD_PATH} replace /> : <AdminLogin />)
+        : tenantHost
+          ? (isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />)
+          : <Home />} />
       <Route path="/register" element={<Register />} />
       <Route path="/portal/:tenantId" element={<CustomerPortal />} />
       <Route path="/customers/:tenantId" element={<CustomerPortal />} />
@@ -130,7 +136,6 @@ export default function App() {
       <Route path="/pppoe-profile/:tenantId" element={<PppoeProfile />} />
       <Route path="/pppoe-expired/:tenantId" element={<PppoeProfile />} />
       <Route path="/tv/:tenantId" element={<CustomerPortal />} />
-      <Route path={`${ADMIN_PATH}/login`} element={<AdminLogin />} />
       <Route element={<AdminProtectedRoute />}>
         <Route path={ADMIN_PATH} element={<AdminLayout />}>
           <Route index element={<Navigate to={ADMIN_DASHBOARD_PATH} replace />} />
@@ -146,7 +151,6 @@ export default function App() {
       </Route>
       {ADMIN_PATH !== '/admin' && (
         <>
-          <Route path="/admin/login" element={<Navigate to={ADMIN_LOGIN_PATH} replace />} />
           <Route path="/admin" element={<Navigate to={adminPath('dashboard')} replace />} />
         </>
       )}

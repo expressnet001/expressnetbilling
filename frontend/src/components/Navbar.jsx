@@ -8,7 +8,7 @@ export default function Navbar({ onMenuClick }) {
 
   const handleLogout = () => {
     logout();
-    navigate('/login', { replace: true });
+    navigate('/', { replace: true });
   };
 
   return (

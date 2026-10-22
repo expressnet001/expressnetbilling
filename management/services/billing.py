@@ -231,14 +231,14 @@ def fetch_paystack_subaccount(subaccount_code):
 
 
 def list_paystack_banks(country="kenya"):
-    """Return active banks and codes from Paystack's current bank directory."""
+    """Return active Kenyan bank transfer recipients and codes from Paystack."""
     secret = paystack_secret_key()
     if not secret:
         raise PaymentProviderError("Bank list is not available right now. Please contact support.", "Missing PAYSTACK_SECRET_KEY", 503)
     response = requests.get(
         f"{PAYSTACK_API_BASE}/bank",
         headers={"Authorization": f"Bearer {secret}"},
-        params={"country": country, "perPage": 100},
+        params={"currency": "KES", "type": "kepss", "perPage": 100},
         timeout=20,
     )
     try:
@@ -254,6 +254,88 @@ def list_paystack_banks(country="kenya"):
         if bank.get("active") and not bank.get("is_deleted") and bank.get("name") and bank.get("code")
     ]
     return sorted(banks, key=lambda bank: bank["name"].casefold())
+
+
+def _paystack_transfer_request(method, path, *, payload=None, params=None):
+    secret = paystack_secret_key()
+    if not secret:
+        raise PaymentProviderError("Paystack withdrawals are not configured. Please contact support.", "Missing PAYSTACK_SECRET_KEY", 503)
+    try:
+        response = requests.request(
+            method,
+            f"{PAYSTACK_API_BASE}{path}",
+            headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"},
+            json=payload,
+            params=params,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise PaymentProviderError(
+            "Paystack could not be reached. Check the withdrawal status before trying again.",
+            f"Paystack transfer request failed: {type(exc).__name__}",
+            502,
+        ) from exc
+    try:
+        result = response.json()
+    except (ValueError, json.JSONDecodeError):
+        result = {}
+    if response.status_code >= 400 or result.get("status") is not True:
+        message = str(result.get("message") or "Paystack rejected the withdrawal request.")
+        raise PaymentProviderError(message, f"Paystack {method} {path} HTTP {response.status_code}", response.status_code if 400 <= response.status_code < 500 else 502)
+    return result.get("data") or {}
+
+
+def create_paystack_transfer_recipient(*, payout_method, name, email, currency="KES", bank_code="", account_number=""):
+    if payout_method == "mpesa":
+        payload = {
+            "type": "mobile_money",
+            "name": name,
+            "email": email,
+            "account_number": account_number,
+            "bank_code": "MPESA",
+            "currency": currency,
+        }
+    else:
+        payload = {
+            "type": "kepss",
+            "name": name,
+            "email": email,
+            "account_number": account_number,
+            "bank_code": bank_code,
+            "currency": currency,
+        }
+    return _paystack_transfer_request("POST", "/transferrecipient", payload=payload)
+
+
+def get_paystack_balance(currency="KES"):
+    balances = _paystack_transfer_request("GET", "/balance", params={"currency": currency})
+    if isinstance(balances, dict):
+        balances = [balances]
+    for item in balances if isinstance(balances, list) else []:
+        if str(item.get("currency") or "").upper() == currency.upper():
+            return int(item.get("balance") or 0)
+    return 0
+
+
+def initiate_paystack_transfer(*, amount, recipient_code, reference, reason, currency="KES"):
+    minor_units = int((Decimal(str(amount)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return _paystack_transfer_request(
+        "POST",
+        "/transfer",
+        payload={"source": "balance", "amount": minor_units, "recipient": recipient_code, "reference": reference, "reason": reason, "currency": currency},
+    )
+
+
+def finalize_paystack_transfer(*, transfer_code, otp):
+    return _paystack_transfer_request(
+        "POST",
+        "/transfer/finalize_transfer",
+        payload={"transfer_code": transfer_code, "otp": otp},
+    )
+
+
+def verify_paystack_transfer(reference):
+    return _paystack_transfer_request("GET", f"/transfer/verify/{reference}")
 
 
 def verify_paystack_transaction(reference):

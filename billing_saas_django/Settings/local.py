@@ -6,7 +6,9 @@ from urllib.parse import quote, unquote, urlparse, urlunparse
 
 DEBUG = env_bool("DJANGO_DEBUG", True)
 RATE_LIMIT_ENABLED = env_bool("RATE_LIMIT_ENABLED", False)
-ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
+ALLOWED_HOSTS = list(
+    dict.fromkeys([*env_list("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]"), ".localhost"])
+)
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 
 RAILWAY_TCP_PROXY_DOMAIN = os.getenv("RAILWAY_TCP_PROXY_DOMAIN")

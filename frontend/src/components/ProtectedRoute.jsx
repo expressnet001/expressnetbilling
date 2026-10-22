@@ -7,7 +7,7 @@ export default function ProtectedRoute() {
   const location = useLocation();
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
+    return <Navigate to="/" replace state={{ from: location }} />;
   }
 
   const pageKey = pageForPath(location.pathname);

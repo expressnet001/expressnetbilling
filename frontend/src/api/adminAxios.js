@@ -26,7 +26,8 @@ adminApi.interceptors.response.use(
       localStorage.removeItem('admin_token');
       localStorage.removeItem('admin_user');
       const loginUrl = adminLoginUrl();
-      if (window.location.pathname !== loginUrl) {
+      const target = new URL(loginUrl, window.location.href);
+      if (window.location.origin !== target.origin || window.location.pathname !== target.pathname) {
         window.location.assign(loginUrl);
       }
     }

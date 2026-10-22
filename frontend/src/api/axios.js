@@ -28,8 +28,8 @@ api.interceptors.response.use(
       localStorage.removeItem('billing_saas_tenant');
       localStorage.removeItem('billing_saas_last_activity');
 
-      if (window.location.pathname !== '/login') {
-        window.location.assign('/login');
+      if (window.location.pathname !== '/') {
+        window.location.assign('/');
       }
     }
 

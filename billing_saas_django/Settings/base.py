@@ -48,6 +48,7 @@ for admin_api_host in (
     PUBLIC_BASE_DOMAIN,
     f"www.{PUBLIC_BASE_DOMAIN}" if PUBLIC_BASE_DOMAIN else "",
     f"{APP_SUBDOMAIN}.{PUBLIC_BASE_DOMAIN}" if APP_SUBDOMAIN and PUBLIC_BASE_DOMAIN else "",
+    f"{ADMIN_SUBDOMAIN}.{PUBLIC_BASE_DOMAIN}" if ADMIN_SUBDOMAIN and PUBLIC_BASE_DOMAIN else "",
     os.getenv("RAILWAY_PUBLIC_DOMAIN", ""),
     os.getenv("RAILWAY_STATIC_URL", ""),
 ):
